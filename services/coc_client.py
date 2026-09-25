@@ -6,38 +6,53 @@ logger = logging.getLogger('bot.coc')
 
 class CoCClient:
     def __init__(self):
-        self.api_token = os.getenv('COC_API_TOKEN')
         self.base_url = 'https://proxy.royaleapi.dev/v1'
-        # RoyaleAPI Proxy butuh User-Agent agar tidak kena tembak HTTP 403
-        self.headers = {
-            'Authorization': f'Bearer {self.api_token}',
+
+    def _format_tag(self, tag: str) -> str:
+        clean_tag = tag.replace('#', '').strip().upper()
+        return f"%23{clean_tag}"
+
+    def _get_headers(self):
+        token = os.getenv('COC_API_TOKEN', '').strip()
+        return {
+            'Authorization': f'Bearer {token}',
             'Accept': 'application/json',
             'User-Agent': 'ixiera-coc-bot/1.0'
         }
 
-    def _format_tag(self, tag: str) -> str:
-        clean_tag = tag.replace('#', '').upper()
-        return f"%23{clean_tag}"
-
     async def get_clan_info(self, clan_tag: str):
+        if not clan_tag:
+            logger.error("CLAN_TAG kosong di environment variable.")
+            return None
+
         url = f"{self.base_url}/clans/{self._format_tag(clan_tag)}"
         
-        async with aiohttp.ClientSession(headers=self.headers) as session:
-            async with session.get(url) as response:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=self._get_headers()) as response:
                 if response.status == 200:
                     return await response.json()
-                logger.error(f"Gagal fetch clan info: HTTP {response.status}")
+                
+                # Tangkap dan cetak detail error dari API
+                error_text = await response.text()
+                logger.error(f"[CoC API Error] Status: {response.status} | URL: {url} | Detail: {error_text}")
                 return None
                 
     async def get_current_war(self, clan_tag: str):
+        if not clan_tag:
+            logger.error("CLAN_TAG kosong di environment variable.")
+            return None
+
         url = f"{self.base_url}/clans/{self._format_tag(clan_tag)}/currentwar"
         
-        async with aiohttp.ClientSession(headers=self.headers) as session:
+        async with aiohttp.ClientSession(headers=self._get_headers()) as session:
             async with session.get(url) as response:
                 if response.status == 200:
                     data = await response.json()
                     if data.get('state') == 'notInWar':
                         return None
                     return data
-                logger.error(f"Gagal fetch war info: HTTP {response.status}")
+                
+                # Tangkap dan cetak detail error dari API
+                error_text = await response.text()
+                logger.error(f"[CoC API Error War] Status: {response.status} | URL: {url} | Detail: {error_text}")
                 return None
