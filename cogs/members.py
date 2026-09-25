@@ -1,6 +1,8 @@
 import discord
 from discord.ext import commands
 from services.coc_client import CoCClient
+from services.db import get_db
+from models import ClanMember
 import os
 
 class MemberCommands(commands.Cog):
@@ -21,15 +23,64 @@ class MemberCommands(commands.Cog):
             return await msg.edit(content="❌ Gagal mengambil data member dari API.")
         
         members = clan_data['memberList']
-        # Sortir member berdasarkan donasi tertinggi
         top_donators = sorted(members, key=lambda x: x.get('donations', 0), reverse=True)[:5]
         
         embed = discord.Embed(title="🏆 Top 5 Donatur Clan", color=discord.Color.green())
         for i, m in enumerate(top_donators, 1):
-            embed.add_field(name=f"{i}. {m.get('name')} (TH {m.get('townHallLevel')})", 
-                            value=f"📤 Donasi: {m.get('donations', 0)} | 📥 Diterima: {m.get('donationsReceived', 0)}", 
-                            inline=False)
+            embed.add_field(
+                name=f"{i}. {m.get('name')} (TH {m.get('townHallLevel')})", 
+                value=f"📤 Donasi: {m.get('donations', 0)} | 📥 Diterima: {m.get('donationsReceived', 0)}", 
+                inline=False
+            )
         
+        await msg.edit(content=None, embed=embed)
+
+    @commands.command(name="inactive", help="Cek member dengan donasi 0 atau terendah")
+    async def check_inactive(self, ctx):
+        if not self.clan_tag:
+            return await ctx.send("❌ Setup error: CLAN_TAG belum diatur.")
+
+        msg = await ctx.send("🔍 Mengidentifikasi member pasif...")
+        clan_data = await self.coc.get_clan_info(self.clan_tag)
+        
+        if not clan_data or 'memberList' not in clan_data:
+            return await msg.edit(content="❌ Gagal mengambil data dari API.")
+
+        members = clan_data['memberList']
+        # Filter donasi terendah (kurang dari 50)
+        low_donors = sorted(members, key=lambda x: x.get('donations', 0))[:5]
+
+        embed = discord.Embed(title="⚠️ Member Donasi Terendah / Pasif", color=discord.Color.orange())
+        for m in low_donors:
+            embed.add_field(
+                name=f"{m.get('name')} ({m.get('role').capitalize()})",
+                value=f"TH {m.get('townHallLevel')} | Donasi: {m.get('donations', 0)}",
+                inline=False
+            )
+
+        await msg.edit(content=None, embed=embed)
+
+    @commands.command(name="clanstats", help="Statistik ringkas komposisi clan")
+    async def clan_stats(self, ctx):
+        if not self.clan_tag:
+            return await ctx.send("❌ Setup error: CLAN_TAG belum diatur.")
+
+        msg = await ctx.send("📊 Mengalkulasi statistik clan...")
+        clan_data = await self.coc.get_clan_info(self.clan_tag)
+        
+        if not clan_data or 'memberList' not in clan_data:
+            return await msg.edit(content="❌ Gagal mengambil data.")
+
+        members = clan_data['memberList']
+        total_members = len(members)
+        total_donations = sum(m.get('donations', 0) for m in members)
+        avg_th = sum(m.get('townHallLevel', 0) for m in members) / total_members if total_members > 0 else 0
+
+        embed = discord.Embed(title=f"📈 Ringkasan Statistik {clan_data.get('name')}", color=discord.Color.blue())
+        embed.add_field(name="👥 Total Member", value=f"{total_members}/50", inline=True)
+        embed.add_field(name="🛡️ Rata-rata TH", value=f"TH {avg_th:.1f}", inline=True)
+        embed.add_field(name="🎁 Total Donasi Clan", value=f"{total_donations:,}", inline=False)
+
         await msg.edit(content=None, embed=embed)
 
 async def setup(bot):
