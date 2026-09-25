@@ -7,8 +7,8 @@ logger = logging.getLogger('bot.coc')
 class CoCClient:
     def __init__(self):
         self.api_token = os.getenv('COC_API_TOKEN')
-        # Endpoint khusus proxy RoyaleAPI yang membypass limitasi IP dinamis
-        self.base_url = 'https://cocproxy.royaleapi.dev/v1'
+        # Endpoint resmi proxy RoyaleAPI untuk bypass IP dinamis
+        self.base_url = 'https://proxy.royaleapi.dev/v1'
         self.headers = {
             'Authorization': f'Bearer {self.api_token}',
             'Accept': 'application/json'
