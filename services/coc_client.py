@@ -6,7 +6,8 @@ logger = logging.getLogger('bot.coc')
 
 class CoCClient:
     def __init__(self):
-        self.base_url = 'https://proxy.royaleapi.dev/v1'
+        # KEMBALI MENGGUNAKAN COCPROXY
+        self.base_url = 'https://cocproxy.royaleapi.dev/v1'
 
     def _format_tag(self, tag: str) -> str:
         clean_tag = tag.replace('#', '').strip().upper()
@@ -32,7 +33,6 @@ class CoCClient:
                 if response.status == 200:
                     return await response.json()
                 
-                # Tangkap dan cetak detail error dari API
                 error_text = await response.text()
                 logger.error(f"[CoC API Error] Status: {response.status} | URL: {url} | Detail: {error_text}")
                 return None
@@ -52,7 +52,6 @@ class CoCClient:
                         return None
                     return data
                 
-                # Tangkap dan cetak detail error dari API
                 error_text = await response.text()
                 logger.error(f"[CoC API Error War] Status: {response.status} | URL: {url} | Detail: {error_text}")
                 return None
