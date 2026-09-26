@@ -43,15 +43,12 @@ def _get_clan_context_from_db(guild_id: str) -> str:
     finally:
         db.close()
 
-# Tambahkan parameter guild_id di fungsi ini
 async def generate_response(prompt: str, guild_id: str) -> str:
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         return "Sistem AI sedang tidak aktif karena API Key tidak ditemukan."
         
     client = genai.Client(api_key=api_key)
-    
-    # Ambil data spesifik milik server ini
     db_context = _get_clan_context_from_db(guild_id)
     
     full_prompt = (
@@ -62,6 +59,7 @@ async def generate_response(prompt: str, guild_id: str) -> str:
     )
 
     try:
+        # Panggil API Gemini 3.6 Flash dengan penanganan async
         response = await client.aio.models.generate_content(
             model='gemini-3.6-flash',
             contents=full_prompt
@@ -69,4 +67,4 @@ async def generate_response(prompt: str, guild_id: str) -> str:
         return response.text
     except Exception as e:
         logger.error(f"Gemini API Error: {e}")
-        return "Maaf, terjadi kesalahan saat memproses permintaan AI."
+        return "Maaf, koneksi ke AI sedang berhalangan. Coba tanya sekali lagi, bro."
