@@ -6,17 +6,26 @@ from models import Base
 
 logger = logging.getLogger('bot.db')
 
-# Ambil URL dari environment, default ke SQLite untuk tes lokal di HP lu
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///clanbot.db")
 
-# Fix kompatibilitas URL PostgreSQL di Railway
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 try:
-    engine = create_engine(DATABASE_URL)
+    engine_args = {
+        "pool_pre_ping": True,  # Cek koneksi aktif/enggak sebelum query biar kagak dropped oleh Supabase
+        "pool_recycle": 300,    # Recycle koneksi tiap 5 menit
+    }
+    
+    # Konfigurasi khusus PostgreSQL/Psycopg3 biar ramah sama Supabase PgBouncer (Transaction Pooler)
+    if "postgresql" in DATABASE_URL:
+        engine_args["connect_args"] = {
+            "prepare_threshold": None  # Matikan prepared statement pemicu error _pg3_0
+        }
+
+    engine = create_engine(DATABASE_URL, **engine_args)
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    logger.info("Database engine berhasil dibuat.")
+    logger.info("Database engine berhasil dibuat (Compatible dengan Supabase Pooler).")
 except Exception as e:
     logger.error(f"Gagal membuat database engine: {e}")
 
