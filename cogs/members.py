@@ -2,7 +2,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from services.coc_client import CoCClient
-from services.db import get_db
+from services.db import get_db, check_standar_access
 from models import ServerConfig
 
 class MemberCommands(commands.Cog):
@@ -64,10 +64,15 @@ class MemberCommands(commands.Cog):
             )
         await interaction.followup.send(embed=embed)
 
-    # BARU: /memberstats [nama]
     @app_commands.command(name="memberstats", description="Melihat detail statistik 1 member clan")
     async def member_stats(self, interaction: discord.Interaction, nama: str):
         await interaction.response.defer()
+        
+        # 🔒 LOCK GUARD FOR TIER STANDAR
+        has_access, err_msg = check_standar_access(interaction.guild_id)
+        if not has_access:
+            return await interaction.followup.send(err_msg)
+
         clan_tag = self.get_clan_tag(interaction.guild_id)
         if not clan_tag:
             return await interaction.followup.send("❌ Server ini belum di-setup! Gunakan `/setup`.")
@@ -90,10 +95,15 @@ class MemberCommands(commands.Cog):
         
         await interaction.followup.send(embed=embed)
 
-    # BARU: /compare [m1] [m2]
     @app_commands.command(name="compare", description="Membandingkan performa 2 member clan")
     async def compare_members(self, interaction: discord.Interaction, member1: str, member2: str):
         await interaction.response.defer()
+        
+        # 🔒 LOCK GUARD FOR TIER STANDAR
+        has_access, err_msg = check_standar_access(interaction.guild_id)
+        if not has_access:
+            return await interaction.followup.send(err_msg)
+
         clan_tag = self.get_clan_tag(interaction.guild_id)
         if not clan_tag:
             return await interaction.followup.send("❌ Server ini belum di-setup!")
@@ -115,10 +125,15 @@ class MemberCommands(commands.Cog):
 
         await interaction.followup.send(embed=embed)
 
-    # BARU: /leaderboard
     @app_commands.command(name="leaderboard", description="Ranking Trophies tertinggi di clan")
     async def leaderboard(self, interaction: discord.Interaction):
         await interaction.response.defer()
+        
+        # 🔒 LOCK GUARD FOR TIER STANDAR
+        has_access, err_msg = check_standar_access(interaction.guild_id)
+        if not has_access:
+            return await interaction.followup.send(err_msg)
+
         clan_tag = self.get_clan_tag(interaction.guild_id)
         if not clan_tag:
             return await interaction.followup.send("❌ Server ini belum di-setup!")

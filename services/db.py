@@ -2,7 +2,8 @@ import os
 import logging
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from models import Base
+from models import Base, ServerConfig
+from datetime import datetime
 
 logger = logging.getLogger('bot.db')
 
@@ -44,4 +45,31 @@ def get_db():
         return db
     except Exception as e:
         logger.error(f"Database session error: {e}")
+        db.close()
+
+def check_standar_access(guild_id: str) -> tuple[bool, str]:
+    """Mengecek apakah server memiliki akses minimal Tier Standar"""
+    db = get_db()
+    try:
+        config = db.query(ServerConfig).filter(ServerConfig.guild_id == str(guild_id)).first()
+        if not config:
+            return False, "❌ Server ini belum di-setup! Gunakan `/setup` terlebih dahulu."
+        
+        now = datetime.now()
+        tier = str(config.tier).lower() if config.tier else "free"
+        
+        # Free Tier Ditolak
+        if tier == "free":
+            return False, (
+                "🔒 **Fitur Khusus Tier Standar**\n"
+                "Command ini membutuhkan akses **Tier Standar** (Rp10.000/bulan).\n"
+                "Hubungi Admin Ixiera (`ixiera.id`) untuk membuka semua fitur utility & auto alert!"
+            )
+            
+        # Cek Expiry (Jika tier Pro atau Standar)
+        if config.expired_at and config.expired_at < now:
+            return False, "⚠️ **Masa Aktif Lisensi Habis**. Hubungi Admin Ixiera untuk memperpanjang!"
+            
+        return True, ""
+    finally:
         db.close()

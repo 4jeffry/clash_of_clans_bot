@@ -2,7 +2,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from services.coc_client import CoCClient
-from services.db import get_db
+from services.db import get_db, check_standar_access
 from models import ServerConfig
 from collections import Counter
 
@@ -19,7 +19,6 @@ class ClanCommands(commands.Cog):
         finally:
             db.close()
 
-    # BARU: /clanmembers
     @app_commands.command(name="clanmembers", description="Melihat daftar semua member clan beserta jabatannya")
     async def clan_members(self, interaction: discord.Interaction):
         await interaction.response.defer()
@@ -34,7 +33,6 @@ class ClanCommands(commands.Cog):
         members = clan_data['memberList']
         embed = discord.Embed(title=f"📋 Daftar Member {clan_data.get('name')} ({len(members)}/50)", color=discord.Color.dark_blue())
 
-        # Grouping ringkas
         leaders = [m.get('name') for m in members if m.get('role') in ['leader', 'coLeader']]
         elders = [m.get('name') for m in members if m.get('role') == 'admin']
         
@@ -44,10 +42,15 @@ class ClanCommands(commands.Cog):
 
         await interaction.followup.send(embed=embed)
 
-    # BARU: /thcomposition
     @app_commands.command(name="thcomposition", description="Melihat breakdown komposisi level Town Hall di clan")
     async def th_composition(self, interaction: discord.Interaction):
         await interaction.response.defer()
+        
+        # 🔒 LOCK GUARD FOR TIER STANDAR
+        has_access, err_msg = check_standar_access(interaction.guild_id)
+        if not has_access:
+            return await interaction.followup.send(err_msg)
+
         clan_tag = self.get_clan_tag(interaction.guild_id)
         if not clan_tag:
             return await interaction.followup.send("❌ Server ini belum di-setup!")
@@ -61,7 +64,6 @@ class ClanCommands(commands.Cog):
 
         embed = discord.Embed(title=f"🏛️ Komposisi Town Hall {clan_data.get('name')}", color=discord.Color.teal())
         
-        # Urutkan dari TH tertinggi ke terendah
         for th in sorted(th_counts.keys(), reverse=True):
             count = th_counts[th]
             embed.add_field(name=f"TH {th}", value=f"👥 **{count}** Member", inline=True)

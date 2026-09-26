@@ -16,12 +16,19 @@ def _check_pro_access(guild_id: str):
             return None, "❌ Server ini belum di-setup! Gunakan `/setup` terlebih dahulu."
         
         now = datetime.now()
-        is_pro = (config.tier == "ai_pro" and config.expired_at and config.expired_at > now)
-        if not is_pro:
+        
+        # BISA BACA "pro" MAUPUN "ai_pro" (Case-Insensitive)
+        tier_status = str(config.tier).lower() if config.tier else "free"
+        is_tier_pro = tier_status in ["pro", "ai_pro"]
+        
+        # JIKA expired_at ISI NULL, ANGGAP AKTIF PERMANEN / TANPA BATAS WAKTU
+        is_not_expired = (config.expired_at is None) or (config.expired_at > now)
+        
+        if not (is_tier_pro and is_not_expired):
             return None, (
                 "⚠️ **Akses AI Pro Belum Aktif**\n"
                 "Fitur analisis mendalam ini khusus untuk **Tier AI Pro** (Rp30.000/bulan).\n"
-                "Hubungi Admin Ixiera (`ixiera.id`) untuk upgrade lisensi server kamu!"
+                "Hubungi Admin Ixiera (``) untuk upgrade lisensi server kamu!"
             )
         return config, None
     finally:
@@ -63,7 +70,7 @@ async def run_ai_audit(guild_id: str) -> str:
         db.close()
 
     prompt = (
-        "Lu adalah Anis, Konsultan AI Manajemen Clan Clash of Clans Profesional dari ixiera.id.\n"
+        "Lu adalah Anis, Konsultan AI Manajemen Clan Clash of Clans Profesional dari .\n"
         "Analisis data statistik clan berikut secara lugas, objektif, dan berikan panduan konkret untuk Leader:\n\n"
         f"{context}\n\n"
         "Beri format respons yang rapi menggunakan emoji Discord:\n"
@@ -108,7 +115,7 @@ async def run_war_strategy(guild_id: str, war_data: dict) -> str:
     )
 
     prompt = (
-        "Lu adalah Anis, War General / Strategist CoC dari ixiera.id.\n"
+        "Lu adalah Profesional player clash of clans , War General / Strategist CoC dari .\n"
         "Berdasarkan kondisi perang di bawah ini, berikan saran taktik rotasi serangan yang harus diinstruksikan Leader ke clan:\n\n"
         f"{context}\n\n"
         "Beri format respons:\n"

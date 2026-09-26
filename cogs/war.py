@@ -2,7 +2,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from services.coc_client import CoCClient
-from services.db import get_db
+from services.db import get_db, check_standar_access
 from models import ServerConfig
 
 class WarCommands(commands.Cog):
@@ -40,10 +40,15 @@ class WarCommands(commands.Cog):
         
         await interaction.followup.send(embed=embed)
 
-    # BARU: /wartime
     @app_commands.command(name="wartime", description="Cek sisa waktu war & sisa attack yang belum dipakai")
     async def wartime(self, interaction: discord.Interaction):
         await interaction.response.defer()
+        
+        # 🔒 LOCK GUARD FOR TIER STANDAR
+        has_access, err_msg = check_standar_access(interaction.guild_id)
+        if not has_access:
+            return await interaction.followup.send(err_msg)
+
         clan_tag = self.get_clan_tag(interaction.guild_id)
         if not clan_tag:
             return await interaction.followup.send("❌ Server ini belum di-setup!")

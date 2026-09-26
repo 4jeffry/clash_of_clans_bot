@@ -6,7 +6,7 @@ logger = logging.getLogger('bot.coc')
 
 class CoCClient:
     def __init__(self):
-        # KEMBALI MENGGUNAKAN COCPROXY
+        # KEMBALI MENGGUNAKAN COCPROXY (Aman dari limitasi IP Railway)
         self.base_url = 'https://cocproxy.royaleapi.dev/v1'
 
     def _format_tag(self, tag: str) -> str:
@@ -55,3 +55,24 @@ class CoCClient:
                 error_text = await response.text()
                 logger.error(f"[CoC API Error War] Status: {response.status} | URL: {url} | Detail: {error_text}")
                 return None
+
+    # TAMBAHAN WAJIB UNTUK SCHEDULER: Fungsi tarik riwayat perang
+    async def get_war_log(self, clan_tag: str):
+        if not clan_tag:
+            logger.error("CLAN_TAG kosong di environment variable.")
+            return []
+
+        url = f"{self.base_url}/clans/{self._format_tag(clan_tag)}/warlog"
+        
+        async with aiohttp.ClientSession(headers=self._get_headers()) as session:
+            async with session.get(url) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return data.get('items', []) if data else []
+                elif response.status == 403:
+                    logger.warning(f"War log clan {clan_tag} diset Private. Gagal menarik history (403).")
+                    return "private"
+                
+                error_text = await response.text()
+                logger.error(f"[CoC API Error WarLog] Status: {response.status} | URL: {url} | Detail: {error_text}")
+                return []
