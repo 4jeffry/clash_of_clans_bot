@@ -4,5 +4,5 @@ aiohttp==3.9.3
 SQLAlchemy>=2.0.36
 APScheduler==3.10.4
 python-dotenv==1.0.1
-google-generativeai
+google-genai
 psycopg[binary]>=3.2.0

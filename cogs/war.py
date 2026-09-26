@@ -1,21 +1,31 @@
 import discord
 from discord.ext import commands
 from services.coc_client import CoCClient
-import os
+from services.db import get_db
+from models import ServerConfig
 
 class WarCommands(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.coc = CoCClient()
-        self.clan_tag = os.getenv('CLAN_TAG')
+
+    def get_clan_tag(self, guild_id):
+        """Fungsi pembantu untuk mengambil Tag Clan dari database berdasarkan Server Discord"""
+        db = get_db()
+        try:
+            config = db.query(ServerConfig).filter(ServerConfig.guild_id == str(guild_id)).first()
+            return config.clan_tag if config else None
+        finally:
+            db.close()
 
     @commands.command(name="warstatus", help="Melihat status Clan War saat ini")
     async def warstatus(self, ctx):
-        if not self.clan_tag:
-            return await ctx.send("❌ Setup error: CLAN_TAG belum diatur.")
+        clan_tag = self.get_clan_tag(ctx.guild.id)
+        if not clan_tag:
+            return await ctx.send("❌ Server ini belum di-setup! Gunakan `!setup #TAGCLAN` terlebih dahulu.")
         
         msg = await ctx.send("🔄 Mengambil data war dari server...")
-        war_data = await self.coc.get_current_war(self.clan_tag)
+        war_data = await self.coc.get_current_war(clan_tag)
         
         if not war_data:
             return await msg.edit(content="🛡️ Clan sedang tidak dalam war atau sedang masa persiapan awal.")

@@ -2,22 +2,30 @@ import discord
 from discord.ext import commands
 from services.coc_client import CoCClient
 from services.db import get_db
-from models import ClanMember
-import os
+from models import ClanMember, ServerConfig
 
 class MemberCommands(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.coc = CoCClient()
-        self.clan_tag = os.getenv('CLAN_TAG')
+
+    def get_clan_tag(self, guild_id):
+        """Fungsi pembantu untuk mengambil Tag Clan dari database berdasarkan Server Discord"""
+        db = get_db()
+        try:
+            config = db.query(ServerConfig).filter(ServerConfig.guild_id == str(guild_id)).first()
+            return config.clan_tag if config else None
+        finally:
+            db.close()
 
     @commands.command(name="donations", help="Melihat Top 5 Donatur di Clan")
     async def top_donations(self, ctx):
-        if not self.clan_tag:
-            return await ctx.send("❌ Setup error: CLAN_TAG belum diatur.")
+        clan_tag = self.get_clan_tag(ctx.guild.id)
+        if not clan_tag:
+            return await ctx.send("❌ Server ini belum di-setup! Gunakan `!setup #TAGCLAN` terlebih dahulu.")
         
         msg = await ctx.send("🔄 Menganalisis data member...")
-        clan_data = await self.coc.get_clan_info(self.clan_tag)
+        clan_data = await self.coc.get_clan_info(clan_tag)
         
         if not clan_data or 'memberList' not in clan_data:
             return await msg.edit(content="❌ Gagal mengambil data member dari API.")
@@ -37,17 +45,17 @@ class MemberCommands(commands.Cog):
 
     @commands.command(name="inactive", help="Cek member dengan donasi 0 atau terendah")
     async def check_inactive(self, ctx):
-        if not self.clan_tag:
-            return await ctx.send("❌ Setup error: CLAN_TAG belum diatur.")
+        clan_tag = self.get_clan_tag(ctx.guild.id)
+        if not clan_tag:
+            return await ctx.send("❌ Server ini belum di-setup! Gunakan `!setup #TAGCLAN` terlebih dahulu.")
 
         msg = await ctx.send("🔍 Mengidentifikasi member pasif...")
-        clan_data = await self.coc.get_clan_info(self.clan_tag)
+        clan_data = await self.coc.get_clan_info(clan_tag)
         
         if not clan_data or 'memberList' not in clan_data:
             return await msg.edit(content="❌ Gagal mengambil data dari API.")
 
         members = clan_data['memberList']
-        # Filter donasi terendah (kurang dari 50)
         low_donors = sorted(members, key=lambda x: x.get('donations', 0))[:5]
 
         embed = discord.Embed(title="⚠️ Member Donasi Terendah / Pasif", color=discord.Color.orange())
@@ -62,11 +70,12 @@ class MemberCommands(commands.Cog):
 
     @commands.command(name="clanstats", help="Statistik ringkas komposisi clan")
     async def clan_stats(self, ctx):
-        if not self.clan_tag:
-            return await ctx.send("❌ Setup error: CLAN_TAG belum diatur.")
+        clan_tag = self.get_clan_tag(ctx.guild.id)
+        if not clan_tag:
+            return await ctx.send("❌ Server ini belum di-setup! Gunakan `!setup #TAGCLAN` terlebih dahulu.")
 
         msg = await ctx.send("📊 Mengalkulasi statistik clan...")
-        clan_data = await self.coc.get_clan_info(self.clan_tag)
+        clan_data = await self.coc.get_clan_info(clan_tag)
         
         if not clan_data or 'memberList' not in clan_data:
             return await msg.edit(content="❌ Gagal mengambil data.")

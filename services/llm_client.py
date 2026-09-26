@@ -1,57 +1,72 @@
 import os
-import google.generativeai as genai
 import logging
+from google import genai
 from services.db import get_db
-from models import ClanMember
+from models import ClanMember, ServerConfig
 
 logger = logging.getLogger('bot.llm')
 
-def setup_gemini():
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        logger.warning("GEMINI_API_KEY tidak ditemukan di .env!")
-        return None
-        
-    genai.configure(api_key=api_key)
-    return genai.GenerativeModel('gemini-3.6-flash')
-
-model = setup_gemini()
-
-def _get_clan_context_from_db() -> str:
-    """Mengambil snapshot data asli dari database Supabase sebagai referensi AI"""
+def _get_clan_context_from_db(guild_id: str) -> str:
+    """Mengambil snapshot data aktif dan pasif dari database berdasarkan server"""
     db = get_db()
     try:
-        members = db.query(ClanMember).order_by(ClanMember.donations.desc()).limit(10).all()
-        if not members:
-            return "Data database kosong."
+        # 1. Cari clan tag berdasarkan ID Server Discord tempat bot diajak ngobrol
+        config = db.query(ServerConfig).filter(ServerConfig.guild_id == str(guild_id)).first()
+        if not config:
+            return "Informasi Sistem: Server ini belum melakukan !setup clan."
+            
+        clan_tag = config.clan_tag
+        
+        # 2. Ambil Top 5 Member Paling Aktif (Donasi Tertinggi)
+        top_members = db.query(ClanMember).filter(ClanMember.clan_tag == clan_tag).order_by(ClanMember.donations.desc()).limit(5).all()
+        
+        # 3. Ambil Top 5 Member Paling Pasif (Donasi 0 / Terendah)
+        lazy_members = db.query(ClanMember).filter(ClanMember.clan_tag == clan_tag).order_by(ClanMember.donations.asc()).limit(5).all()
 
-        context_str = "Data Riwayat Clan Saat Ini (Real-time dari Database):\n"
-        for m in members:
-            context_str += f"- {m.name} (TH{m.townhall_level}, Jabatan: {m.role}): Donasi {m.donations}, Diterima {m.donations_received}\n"
+        if not top_members:
+            return f"Data member untuk clan {clan_tag} belum tersinkronisasi."
+
+        # 4. Susun konteks ke otak AI
+        context_str = f"Data Faktual Clan (Tag: {clan_tag}):\n"
+        context_str += "--- MEMBER PALING AKTIF (DONASI TERTINGGI) ---\n"
+        for m in top_members:
+            context_str += f"- {m.name} (TH{m.townhall_level}, Jabatan: {m.role}): Donasi {m.donations}\n"
+            
+        context_str += "\n--- MEMBER PASIF / TERANCAM KICK (DONASI TERENDAH) ---\n"
+        for m in lazy_members:
+            context_str += f"- {m.name} (TH{m.townhall_level}, Jabatan: {m.role}): Donasi {m.donations}\n"
+            
         return context_str
     except Exception as e:
-        logger.error(f"Gagal mengambil konteks DB untuk LLM: {e}")
+        logger.error(f"Gagal mengambil konteks DB: {e}")
         return "Gagal memuat data database."
     finally:
         db.close()
 
-async def generate_response(prompt: str) -> str:
-    if not model:
+# Tambahkan parameter guild_id di fungsi ini
+async def generate_response(prompt: str, guild_id: str) -> str:
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
         return "Sistem AI sedang tidak aktif karena API Key tidak ditemukan."
         
-    db_context = _get_clan_context_from_db()
+    client = genai.Client(api_key=api_key)
     
-    # Gabungkan konteks asli database ke sistem prompt
+    # Ambil data spesifik milik server ini
+    db_context = _get_clan_context_from_db(guild_id)
+    
     full_prompt = (
         f"Lu adalah Asisten AI Resmi Clan Clash of Clans (ixiera.id).\n"
-        f"Gunakan data faktual dari database di bawah ini untuk menjawab jika pertanyaan berhubungan dengan member/donasi:\n"
-        f"--- DATA DATABASE ---\n{db_context}\n---------------------\n"
-        f"Pertanyaan User: {prompt}"
+        f"Gunakan data faktual di bawah ini untuk menjawab pertanyaan soal kondisi clan, siapa yang aktif, atau siapa yang pasif:\n"
+        f"{db_context}\n---------------------\n"
+        f"Pertanyaan/Obrolan User: {prompt}"
     )
 
     try:
-        response = await model.generate_content_async(full_prompt)
+        response = await client.aio.models.generate_content(
+            model='gemini-3.6-flash',
+            contents=full_prompt
+        )
         return response.text
     except Exception as e:
         logger.error(f"Gemini API Error: {e}")
-        return "Maaf, terjadi kesalahan saat memproses permintaan ke AI."
+        return "Maaf, terjadi kesalahan saat memproses permintaan AI."
