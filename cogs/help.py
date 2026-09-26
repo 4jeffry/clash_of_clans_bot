@@ -11,26 +11,26 @@ class CustomHelp(commands.Cog):
         await interaction.response.defer()
 
         embed = discord.Embed(
-            title="⚔️ Panduan & Daftar Command Ixiera CoC Bot",
+            title="⚔️ Panduan & Daftar Command  CoC Bot",
             description=(
-                "Selamat datang di **Ixiera CoC AI Assistant**!\n"
-                "Gunakan Slash Command (`/`) di bawah ini atau **mention bot langsung** untuk ngobrol pakai AI.\n"
+                "Selamat datang di ** CoC AI Assistant**!\n"
+                "Gunakan Slash Command (`/`) di bawah ini untuk mengelola clan kamu.\n"
                 "───────────────"
             ),
-            color=discord.Color.from_rgb(88, 101, 242) # Warna Blurple khas Discord
+            color=discord.Color.from_rgb(88, 101, 242)
         )
 
-        # Kategori AI
+        # Kategori AI Pro
         embed.add_field(
-            name="🤖 **AI Assistant & Analytics**",
+            name="🟣 **AI Pro Features (Gemini Intelligence)**",
             value=(
-                "• `/ask [pertanyaan]` — Tanya strategi, base, atau analisis clan ke Gemini\n"
-                "• `@clan_bot [pesan]` — Ngobrol langsung/tanya siapa member pasif"
+                "• `/ai-audit` — Deep audit kesehatan clan & rekomendasi member pasif\n"
+                "• `/war-strategy` — Analisis taktik & rekomendasi pemetaan serangan war"
             ),
             inline=False
         )
 
-        # Kategori Member & Analytics
+        # Kategori Member & Analytics (Standar)
         embed.add_field(
             name="👥 **Member & Clan Analytics**",
             value=(
@@ -43,7 +43,7 @@ class CustomHelp(commands.Cog):
             inline=False
         )
 
-        # Kategori War & Management
+        # Kategori War & Automation (Standar)
         embed.add_field(
             name="⚔️ **War & Clan Overview**",
             value=(
@@ -51,12 +51,12 @@ class CustomHelp(commands.Cog):
                 "• `/wartime` — Sisa waktu war & sisa attack yang belum dipakai\n"
                 "• `/clanmembers` — List lengkap struktur jabatan clan\n"
                 "• `/thcomposition` — Breakdown jumlah member per level TH\n"
-                "• `/clanstats` — Ringkasan umum statistik clan"
+                "• 🔔 *Auto War Alert (Leader Ping) aktif otomatis di Tier Standar*"
             ),
             inline=False
         )
 
-        # Kategori Admin
+        # Kategori System
         embed.add_field(
             name="⚙️ **System & Setup (Admin Only)**",
             value="• `/setup [clan_tag]` — Binding bot ke Tag Clan CoC server ini",
@@ -64,7 +64,7 @@ class CustomHelp(commands.Cog):
         )
 
         embed.set_footer(
-            text="ixiera.id • Operating System Studio",
+            text="Operating System Studio",
             icon_url=self.bot.user.display_avatar.url if self.bot.user else None
         )
 

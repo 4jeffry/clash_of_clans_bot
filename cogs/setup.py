@@ -5,10 +5,14 @@ from services.coc_client import CoCClient
 from services.db import get_db
 from models import ServerConfig
 from scheduler import sync_all_clans
+from datetime import datetime, timedelta
 import logging
 import asyncio
 
 logger = logging.getLogger('bot.setup')
+
+# ID Discord Founder (Ubah jika ID kamu berbeda)
+MY_DISCORD_ID = "1398954695137038339"
 
 class SetupCommands(commands.Cog):
     def __init__(self, bot):
@@ -26,7 +30,7 @@ class SetupCommands(commands.Cog):
 
         clan_name = clan_data['name']
         guild_id = str(interaction.guild_id)
-        user_id = str(interaction.author.id)
+        user_id = str(interaction.user.id) # Fixed: interaction.user
 
         db = get_db()
         try:
@@ -51,6 +55,42 @@ class SetupCommands(commands.Cog):
             db.rollback()
             logger.error(f"Gagal menyimpan config server: {e}")
             await interaction.followup.send("❌ Terjadi kesalahan pada database.")
+        finally:
+            db.close()
+
+    @app_commands.command(name="grant-pro", description="[ADMIN ONLY] Aktifkan lisensi berbayar ke server")
+    async def grant_pro(self, interaction: discord.Interaction, guild_id: str, tier: str, days: int):
+        # Cek apakah pengirim command adalah Founder
+        if str(interaction.user.id) != MY_DISCORD_ID:
+            return await interaction.response.send_message("❌ Command ini khusus Owner Ixiera!", ephemeral=True)
+
+        await interaction.response.defer()
+        db = get_db()
+        try:
+            config = db.query(ServerConfig).filter(ServerConfig.guild_id == guild_id).first()
+            if not config:
+                return await interaction.followup.send(f"❌ Server ID `{guild_id}` belum pernah melakukan `/setup`.")
+
+            now = datetime.now()
+            # Jika lisensi masih aktif, tambahkan dari tanggal expired sebelumnya
+            base_date = config.expired_at if (config.expired_at and config.expired_at > now) else now
+            new_expired = base_date + timedelta(days=days)
+
+            config.tier = tier.lower() # Option: 'standar' atau 'ai_pro'
+            config.expired_at = new_expired
+            db.commit()
+
+            embed = discord.Embed(title="🎉 Lisensi Berhasil Diaktifkan!", color=discord.Color.gold())
+            embed.add_field(name="Guild ID", value=guild_id, inline=True)
+            embed.add_field(name="Tier Status", value=tier.upper(), inline=True)
+            embed.add_field(name="Aktif Sampai", value=new_expired.strftime("%d %B %Y %H:%M"), inline=False)
+            
+            await interaction.followup.send(embed=embed)
+            logger.info(f"Admin granted tier {tier} to guild {guild_id} for {days} days.")
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Gagal grant pro: {e}")
+            await interaction.followup.send("❌ Gagal mengupdate lisensi di database.")
         finally:
             db.close()
 

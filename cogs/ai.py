@@ -1,45 +1,41 @@
 import discord
+from discord import app_commands
 from discord.ext import commands
-from services.llm_client import generate_response
+from services.llm_client import run_ai_audit, run_war_strategy
+from services.coc_client import CoCClient
+from services.db import get_db
+from models import ServerConfig
 
-class AICommands(commands.Cog):
+class AICog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self.coc = CoCClient()
 
-    @commands.Cog.listener()
-    async def on_message(self, message):
-        if message.author == self.bot.user:
-            return
+    def get_clan_tag(self, guild_id):
+        db = get_db()
+        try:
+            config = db.query(ServerConfig).filter(ServerConfig.guild_id == str(guild_id)).first()
+            return config.clan_tag if config else None
+        finally:
+            db.close()
 
-        if self.bot.user.mentioned_in(message):
-            clean_text = message.content.replace(f'<@{self.bot.user.id}>', '').strip()
-            
-            if not clean_text:
-                return await message.reply("Ada apa, bro? Mau nanya-nanya soal CoC atau bahas clan?")
+    @app_commands.command(name="ai-audit", description="[AI PRO] Deep audit kesehatan clan & rekomendasi evaluasi member")
+    async def ai_audit(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        result = await run_ai_audit(str(interaction.guild_id))
+        await interaction.followup.send(result)
 
-            async with message.channel.typing():
-                prompt = f"Sebagai asisten AI ahli Clash of Clans. Jawab obrolan ini dengan santai, asik, dan ringkas layaknya teman ngobrol: {clean_text}"
-                
-                # Kirim guild.id biar AI tahu ini server clan yang mana
-                jawaban = await generate_response(prompt, str(message.guild.id))
-                
-                if len(jawaban) > 2000:
-                    jawaban = jawaban[:1997] + "..."
-                    
-                await message.reply(jawaban)
+    @app_commands.command(name="war-strategy", description="[AI PRO] Analisis taktik & rekomendasi pemetaan serangan war")
+    async def ai_war_strategy(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        
+        clan_tag = self.get_clan_tag(interaction.guild_id)
+        if not clan_tag:
+            return await interaction.followup.send("❌ Server ini belum di-setup! Gunakan `/setup` terlebih dahulu.")
 
-    @commands.command(name="ask", help="Tanya Gemini tentang strategi CoC, base design, dll.")
-    async def ask_ai(self, ctx, *, pertanyaan: str):
-        async with ctx.typing():
-            prompt = f"Sebagai asisten AI ahli Clash of Clans. Jawab pertanyaan ini dengan ringkas dan jelas: {pertanyaan}"
-            
-            # Kirim guild.id dari context command
-            jawaban = await generate_response(prompt, str(ctx.guild.id))
-            
-            if len(jawaban) > 2000:
-                jawaban = jawaban[:1997] + "..."
-                
-            await ctx.reply(jawaban)
+        war_data = await self.coc.get_current_war(clan_tag)
+        result = await run_war_strategy(str(interaction.guild_id), war_data)
+        await interaction.followup.send(result)
 
 async def setup(bot):
-    await bot.add_cog(AICommands(bot))
+    await bot.add_cog(AICog(bot))
