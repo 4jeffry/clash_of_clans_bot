@@ -76,7 +76,9 @@ class CoCClient:
                 error_text = await response.text()
                 logger.error(f"[CoC API Error WarLog] Status: {response.status} | URL: {url} | Detail: {error_text}")
                 return []
-                  async def get_cwl_group(self, clan_tag: str):
+
+    # FUNGSI BARU UNTUK TIER FREE: Data Clan War League (CWL)
+    async def get_cwl_group(self, clan_tag: str):
         if not clan_tag:
             logger.error("CLAN_TAG kosong di environment variable.")
             return None
@@ -94,4 +96,3 @@ class CoCClient:
                 error_text = await response.text()
                 logger.error(f"[CoC API Error CWL] Status: {response.status} | URL: {url} | Detail: {error_text}")
                 return None
-
