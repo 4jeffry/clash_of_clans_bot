@@ -36,6 +36,22 @@ class CoCClient:
                 error_text = await response.text()
                 logger.error(f"[CoC API Error] Status: {response.status} | URL: {url} | Detail: {error_text}")
                 return None
+
+    # DISISIPKAN: Ditambahkan untuk melayani fitur /ai-screen
+    async def get_player_info(self, player_tag: str):
+        if not player_tag:
+            return None
+
+        url = f"{self.base_url}/players/{self._format_tag(player_tag)}"
+        
+        async with aiohttp.ClientSession(headers=self._get_headers()) as session:
+            async with session.get(url) as response:
+                if response.status == 200:
+                    return await response.json()
+                
+                error_text = await response.text()
+                logger.error(f"[CoC API Error Player] Status: {response.status} | URL: {url} | Detail: {error_text}")
+                return None
                 
     async def get_current_war(self, clan_tag: str):
         if not clan_tag:

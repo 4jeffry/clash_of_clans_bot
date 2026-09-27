@@ -1,7 +1,13 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
-from services.llm_client import run_ai_audit, run_war_strategy, run_visual_strategy
+from services.llm_client import (
+    run_ai_audit, 
+    run_war_strategy, 
+    run_visual_strategy, 
+    run_ai_screen, 
+    run_ai_scout
+)
 from services.coc_client import CoCClient
 from services.db import get_db
 from models import ServerConfig
@@ -59,6 +65,35 @@ class AICog(commands.Cog):
             
         image_bytes = await foto_base.read()
         result = await run_visual_strategy(str(interaction.guild_id), image_bytes, detail_pasukan)
+        await self.send_long_message(interaction, result)
+
+    @app_commands.command(name="ai-screen", description="[AI PRO] Cek profil calon member sebelum di-acc join")
+    @app_commands.describe(player_tag="Tag player calon member (contoh: #ABC1234)")
+    async def ai_screen(self, interaction: discord.Interaction, player_tag: str):
+        await interaction.response.defer()
+        
+        if not player_tag.startswith('#'):
+            player_tag = f"#{player_tag}"
+            
+        player_data = await self.coc.get_player_info(player_tag)
+        if not player_data or 'tag' not in player_data:
+            return await interaction.followup.send("❌ Data player tidak ditemukan! Pastikan tag-nya benar.")
+
+        result = await run_ai_screen(str(interaction.guild_id), player_data)
+        await self.send_long_message(interaction, result)
+
+    @app_commands.command(name="ai-scout", description="[AI PRO] Intel war lawan: cari base terlemah & strategi perakitan bintang")
+    async def ai_scout(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        clan_tag = self.get_clan_tag(interaction.guild_id)
+        if not clan_tag:
+            return await interaction.followup.send("❌ Server belum di-setup!")
+
+        war_data = await self.coc.get_current_war(clan_tag)
+        if not war_data or war_data.get('state') not in ['inWar', 'preparation']:
+            return await interaction.followup.send("❌ Clan sedang tidak dalam periode War aktif!")
+
+        result = await run_ai_scout(str(interaction.guild_id), war_data)
         await self.send_long_message(interaction, result)
 
 async def setup(bot):
