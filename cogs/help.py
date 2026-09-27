@@ -11,8 +11,8 @@ class CustomHelp(commands.Cog):
         await interaction.response.defer()
 
         try:
-            # Diubah agar mengambil command spesifik berdasarkan guild server saat ini
-            fetched_cmds = await self.bot.tree.fetch_commands(guild=interaction.guild)
+            # Mengambil Global Commands asli tanpa filter guild
+            fetched_cmds = await self.bot.tree.fetch_commands()
             cmd_map = {cmd.name: cmd.id for cmd in fetched_cmds}
         except Exception:
             cmd_map = {}
