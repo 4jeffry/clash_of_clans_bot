@@ -10,14 +10,14 @@ class CustomHelp(commands.Cog):
     async def help_command(self, interaction: discord.Interaction):
         await interaction.response.defer()
 
-        # FIX DIAGNOSIS: Tarik data Slash Command resmi (lengkap dengan ID) langsung dari server Discord
+        # Tarik data Slash Command resmi (lengkap dengan ID) langsung dari Discord API
         try:
             fetched_cmds = await self.bot.tree.fetch_commands()
             cmd_map = {cmd.name: cmd.id for cmd in fetched_cmds}
         except Exception:
             cmd_map = {}
 
-        # Fungsi helper buat ngubah jadi format <slash_command_bisa_diklik>
+        # Helper untuk merubah teks command jadi clickable slash mention </nama:id>
         def get_cmd(name):
             cmd_id = cmd_map.get(name)
             if cmd_id:
@@ -36,7 +36,7 @@ class CustomHelp(commands.Cog):
             color=discord.Color.from_rgb(88, 101, 242)
         )
 
-        # 🟢 TIER 1: FREE
+        # 🟢 TIER 1: FREE (Fitur Dasar + Capital Raid)
         embed.add_field(
             name="🟢 **TIER FREE (Fitur Dasar Gratis)**",
             value=(
@@ -44,7 +44,10 @@ class CustomHelp(commands.Cog):
                 f"• {get_cmd('inactive')} — Cek member pasif / donasi terendah\n"
                 f"• {get_cmd('warstatus')} — Status bintang & destruction war saat ini\n"
                 f"• {get_cmd('cwl')} — Cek status & daftar clan di grup Clan War League\n"
-                f"• {get_cmd('clanmembers')} — List struktur jabatan clan"
+                f"• {get_cmd('clanmembers')} — List struktur jabatan clan\n"
+                f"• {get_cmd('capital')} — Ringkasan Raid Clan Capital\n"
+                f"• {get_cmd('capitaldonations')} — Top donatur Capital Gold\n"
+                f"• {get_cmd('raidstats')} — Status serangan Raid Weekend member"
             ),
             inline=False
         )

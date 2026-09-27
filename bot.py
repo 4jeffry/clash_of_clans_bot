@@ -42,7 +42,7 @@ class ClanBot(commands.Bot):
         logger.info('------')
         
         init_db()
-        # FIX: Masukkan parameter bot agar scheduler bisa mengirim alert
+        # Masukkan instance bot ke scheduler untuk Notifikasi Alert
         start_scheduler(self)
         
         await self.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="Clan Wars | /help"))
