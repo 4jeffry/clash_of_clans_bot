@@ -1,6 +1,7 @@
 import logging
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
+import dateutil.parser
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from services.coc_client import CoCClient
 from services.db import get_db
@@ -9,35 +10,47 @@ from models import ClanMember, ServerConfig, WarHistory
 logger = logging.getLogger('bot.scheduler')
 coc = CoCClient()
 
-async def sync_all_clans():
+async def sync_all_clans(bot):
     db = get_db()
     try:
-        # Ambil semua konfigurasi server dari database
         configs = db.query(ServerConfig).all()
         if not configs:
-            logger.info("Belum ada server yang melakukan /setup. Skip sinkronisasi.")
             return
             
-        logger.info(f"Memulai sinkronisasi untuk {len(configs)} clan...")
-        
         for config in configs:
             clan_tag = config.clan_tag
             
+            # CEK LISENSI UNTUK FITUR ALERT (Hanya Standar & Pro)
+            tier_status = str(config.tier).lower() if config.tier else "free"
+            is_premium = tier_status in ["standar", "pro", "ai_pro"]
+            alert_channel = None
+            if is_premium and getattr(config, 'alert_channel_id', None):
+                alert_channel = bot.get_channel(int(config.alert_channel_id))
+            
             # ==========================================
-            # 1. SINKRONISASI DATA MEMBER & DONASI
+            # 1. MEMBER LEAVE ALERT & SINKRONISASI
             # ==========================================
             clan_data = await coc.get_clan_info(clan_tag)
             
             if clan_data and 'memberList' in clan_data:
+                api_tags = [m['tag'] for m in clan_data['memberList']]
+                db_members = db.query(ClanMember).filter(ClanMember.clan_tag == clan_tag).all()
+                
+                # Cek member yang ada di DB tapi hilang di Game (Leave)
+                for db_m in db_members:
+                    if db_m.tag not in api_tags:
+                        if alert_channel:
+                            await alert_channel.send(f"🚨 **Member Leave Alert:** `{db_m.name}` (TH {db_m.townhall_level}) baru saja keluar dari clan.")
+                        db.delete(db_m) # Hapus dari database agar tidak alert dua kali
+                
+                # Update member yang masih ada
                 for member in clan_data['memberList']:
-                    # Cocokkan tag player dan clan_tag agar tidak kecampur
                     db_member = db.query(ClanMember).filter(
                         ClanMember.tag == member['tag'],
                         ClanMember.clan_tag == clan_tag
                     ).first()
                     
                     if not db_member:
-                        # Masukkan clan_tag saat membuat member baru
                         db_member = ClanMember(tag=member['tag'], clan_tag=clan_tag)
                         db.add(db_member)
                     
@@ -47,20 +60,46 @@ async def sync_all_clans():
                     db_member.donations = member['donations']
                     db_member.donations_received = member['donationsReceived']
                     db_member.last_updated = datetime.utcnow()
-            else:
-                logger.error(f"Gagal mengambil data member untuk clan {clan_tag}.")
             
             # ==========================================
-            # 2. SINKRONISASI DATA WAR HISTORY
+            # 2. AUTO WAR ALERT
+            # ==========================================
+            war_data = await coc.get_current_war(clan_tag)
+            if war_data and war_data.get('state') == 'inWar' and alert_channel:
+                try:
+                    end_time_str = war_data.get('endTime')
+                    # Parse waktu format CoC (CoC API menggunakan format khusus T...Z)
+                    end_time = dateutil.parser.isoparse(end_time_str.replace("T", "T").replace("Z", "+00:00"))
+                    now = datetime.now(timezone.utc)
+                    time_diff = end_time - now
+                    
+                    # Alert jika sisa waktu war antara 1 hingga 2 jam
+                    if 3600 <= time_diff.total_seconds() <= 7200:
+                        clan_info = war_data.get('clan', {})
+                        members = clan_info.get('members', [])
+                        
+                        no_attackers = []
+                        for m in members:
+                            attacks = m.get('attacks', [])
+                            max_attacks = war_data.get('attacksPerMember', 2)
+                            if len(attacks) < max_attacks:
+                                no_attackers.append(f"{m.get('name')} ({max_attacks - len(attacks)} Attack Sisa)")
+                        
+                        if no_attackers:
+                            alert_msg = "⚔️ **AUTO WAR ALERT** ⚔️\nWar akan berakhir dalam waktu kurang dari 2 Jam!\n\n**Member belum attack:**\n"
+                            alert_msg += "\n".join([f"• {name}" for name in no_attackers])
+                            await alert_channel.send(alert_msg)
+                except Exception as e:
+                    logger.error(f"Gagal parse waktu war untuk alert: {e}")
+
+            # ==========================================
+            # 3. WAR HISTORY
             # ==========================================
             war_log = await coc.get_war_log(clan_tag)
             if isinstance(war_log, list) and len(war_log) > 0:
-                # Ambil 5 war terakhir saja biar prosesnya ringan
                 for war in war_log[:5]: 
                     opponent = war.get('opponent', {})
                     clan = war.get('clan', {})
-                    
-                    # Pastikan tag lawan ada, lalu cek apakah war ini udah tersimpan di database
                     if opponent.get('tag'):
                         existing_war = db.query(WarHistory).filter(
                             WarHistory.clan_tag == clan_tag,
@@ -79,19 +118,16 @@ async def sync_all_clans():
                             db.add(new_history)
 
         db.commit()
-        logger.info("Sinkronisasi semua database clan (Member & War History) berhasil.")
     except Exception as e:
         db.rollback()
         logger.error(f"Error sinkronisasi database: {e}")
     finally:
         db.close()
 
-def start_scheduler():
+def start_scheduler(bot):
     scheduler = AsyncIOScheduler()
-    # Interval diubah jadi 1 jam agar data AI lebih real-time dan akurat
-    scheduler.add_job(sync_all_clans, 'interval', hours=1, id='sync_all_clans_job')
+    # Interval tetap 1 jam agar war alert tidak terlewat
+    scheduler.add_job(sync_all_clans, 'interval', hours=1, args=[bot], id='sync_all_clans_job')
     scheduler.start()
     logger.info("Scheduler aktif (Interval: 1 Jam).")
-    
-    # Panggil langsung pas bot nyala biar tabel gak kosong pas pertama kali setup
-    asyncio.create_task(sync_all_clans())
+    asyncio.create_task(sync_all_clans(bot))

@@ -1,6 +1,8 @@
 import os
 import logging
+import asyncio
 from google import genai
+from google.genai import types
 from services.db import get_db
 from models import ClanMember, ServerConfig
 from datetime import datetime
@@ -8,7 +10,6 @@ from datetime import datetime
 logger = logging.getLogger('bot.llm')
 
 def _check_pro_access(guild_id: str):
-    """Mengecek apakah server memiliki akses Tier AI Pro yang aktif"""
     db = get_db()
     try:
         config = db.query(ServerConfig).filter(ServerConfig.guild_id == str(guild_id)).first()
@@ -16,26 +17,21 @@ def _check_pro_access(guild_id: str):
             return None, "❌ Server ini belum di-setup! Gunakan `/setup` terlebih dahulu."
         
         now = datetime.now()
-        
-        # BISA BACA "pro" MAUPUN "ai_pro" (Case-Insensitive)
         tier_status = str(config.tier).lower() if config.tier else "free"
         is_tier_pro = tier_status in ["pro", "ai_pro"]
-        
-        # JIKA expired_at ISI NULL, ANGGAP AKTIF PERMANEN / TANPA BATAS WAKTU
         is_not_expired = (config.expired_at is None) or (config.expired_at > now)
         
         if not (is_tier_pro and is_not_expired):
             return None, (
                 "⚠️ **Akses AI Pro Belum Aktif**\n"
                 "Fitur analisis mendalam ini khusus untuk **Tier AI Pro** (Rp30.000/bulan).\n"
-                "Hubungi Admin Ixiera (``) untuk upgrade lisensi server kamu!"
+                "Hubungi Admin Ixiera (`ixiera.id`) untuk upgrade lisensi server kamu!"
             )
         return config, None
     finally:
         db.close()
 
 async def run_ai_audit(guild_id: str) -> str:
-    """Melakukan deep audit kesehatan clan berdasarkan snapshot database SQL"""
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         return "❌ API Key AI belum dikonfigurasi."
@@ -49,7 +45,7 @@ async def run_ai_audit(guild_id: str) -> str:
         clan_tag = config.clan_tag
         members = db.query(ClanMember).filter(ClanMember.clan_tag == clan_tag).all()
         if not members:
-            return f"❌ Data member untuk clan `{clan_tag}` belum tersinkronisasi di database."
+            return f"❌ Data member untuk clan `{clan_tag}` belum tersinkronisasi."
 
         total_members = len(members)
         total_donations = sum(m.donations for m in members)
@@ -59,7 +55,6 @@ async def run_ai_audit(guild_id: str) -> str:
         top_donors = sorted(members, key=lambda x: x.donations, reverse=True)[:5]
         low_donors = sorted(members, key=lambda x: x.donations)[:5]
 
-        # Ingestion context ringkas
         context = f"METRICS CLAN ({clan_tag}):\n"
         context += f"- Total Member: {total_members}/50\n"
         context += f"- Rata-rata Donasi Clan: {avg_donations}\n"
@@ -70,28 +65,32 @@ async def run_ai_audit(guild_id: str) -> str:
         db.close()
 
     prompt = (
-        "Lu adalah Anis, Konsultan AI Manajemen Clan Clash of Clans Profesional dari .\n"
-        "Analisis data statistik clan berikut secara lugas, objektif, dan berikan panduan konkret untuk Leader:\n\n"
+        "Lu adalah Niki, Konsultan AI Manajemen Clan Clash of Clans dari ixiera.id.\n"
+        "Gunakan gaya bahasa yang humble, suportif, dan bersahabat layaknya seorang mentor.\n"
+        "Fokuslah pada pembinaan member. JANGAN menyarankan kick secara agresif, berikan saran teguran halus atau cara leader merangkul member yang sedang pasif/sibuk di dunia nyata.\n\n"
         f"{context}\n\n"
         "Beri format respons yang rapi menggunakan emoji Discord:\n"
-        "1. 📊 **Health Check Clan** (Skor 1-10 + analisis ringkas kondisi keaktifan)\n"
-        "2. ⚠️ **Rekomendasi Kick / Peringatan** (Sebutkan nama-nama yang indikasi pasif/pensi beserta alasannya)\n"
-        "3. 💡 **Action Plan Minggu Ini** (Saran konkret buat Leader/Co-Leader)"
+        "1. 📊 **Kesehatan Clan** (Skor 1-10 + evaluasi positif/suportif)\n"
+        "2. 🤝 **Fokus Pembinaan** (Sebutkan member pasif & saran pendekatan personal ke mereka)\n"
+        "3. 💡 **Action Plan Minggu Ini** (Saran ringan dan membangun untuk Leader/Co-Leader)"
     )
 
-    try:
-        client = genai.Client(api_key=api_key)
-        response = await client.aio.models.generate_content(
-            model='gemini-3.6-flash',
-            contents=prompt
-        )
-        return response.text
-    except Exception as e:
-        logger.error(f"Error AI Audit: {e}")
-        return "❌ Gagal memproses AI Audit. Coba beberapa saat lagi."
+    client = genai.Client(api_key=api_key)
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            response = await client.aio.models.generate_content(model='gemini-3.6-flash', contents=prompt)
+            return response.text
+        except Exception as e:
+            if "503" in str(e) or "UNAVAILABLE" in str(e):
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+            logger.error(f"Error AI Audit: {e}")
+            return "❌ Server AI sedang kelebihan beban. Mohon coba beberapa menit lagi."
 
+# FUNGSI LAMA DIKEMBALIKAN: Analisis Agregat API
 async def run_war_strategy(guild_id: str, war_data: dict) -> str:
-    """Menganalisis data war aktif dari API dan memberikan saran taktik"""
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         return "❌ API Key AI belum dikonfigurasi."
@@ -115,22 +114,61 @@ async def run_war_strategy(guild_id: str, war_data: dict) -> str:
     )
 
     prompt = (
-        "Lu adalah Profesional player clash of clans , War General / Strategist CoC dari .\n"
-        "Berdasarkan kondisi perang di bawah ini, berikan saran taktik rotasi serangan yang harus diinstruksikan Leader ke clan:\n\n"
+        "Lu adalah Niki, War Strategist CoC dari ixiera.id yang humble.\n"
+        "Berdasarkan kondisi agregat perang di bawah ini, berikan saran taktik rotasi serangan secara objektif:\n\n"
         f"{context}\n\n"
         "Beri format respons:\n"
-        "1. ⚔️ **Analisis Posisi War**\n"
-        "2. 🎯 **Fokus Strategi Serangan** (Kapan harus mirror, kapan harus clean-up bawah)\n"
-        "3. 📢 **Draf Pesan Broadcast Chat In-Game** (Pesan pendek yang tinggal di-copas Leader ke chat CoC)"
+        "1. ⚔️ **Analisis Posisi War** (Siapa yang unggul)\n"
+        "2. 🎯 **Fokus Strategi Clan** (Kapan harus mirror, kapan harus clean-up bawah)\n"
+        "3. 📢 **Draf Pesan Broadcast Chat In-Game** (Pesan pendek suportif untuk Leader ke chat CoC)"
     )
 
-    try:
-        client = genai.Client(api_key=api_key)
-        response = await client.aio.models.generate_content(
-            model='gemini-3.6-flash',
-            contents=prompt
-        )
-        return response.text
-    except Exception as e:
-        logger.error(f"Error War Strategy: {e}")
-        return "❌ Gagal memproses War Strategy AI."
+    client = genai.Client(api_key=api_key)
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            response = await client.aio.models.generate_content(model='gemini-3.6-flash', contents=prompt)
+            return response.text
+        except Exception as e:
+            if "503" in str(e) or "UNAVAILABLE" in str(e):
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+            logger.error(f"Error War Strategy: {e}")
+            return "❌ Server AI sedang kelebihan beban. Mohon coba beberapa menit lagi."
+
+# FUNGSI BARU: Analisis Visual Base Lawan
+async def run_visual_strategy(guild_id: str, image_bytes: bytes) -> str:
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        return "❌ API Key AI belum dikonfigurasi."
+
+    config, err_msg = _check_pro_access(guild_id)
+    if err_msg:
+        return err_msg
+
+    prompt = (
+        "Lu adalah Niki, War Strategist Clash of Clans yang humble dan suportif dari ixiera.id.\n"
+        "Leader baru saja mengirimkan screenshot base lawan yang akan diserang.\n"
+        "Analisis gambar base tersebut dan berikan panduan taktik. Format respons:\n"
+        "1. 🏰 **Analisis Base Lawan** (Titik lemah, posisi Town Hall, Eagle Artillery, Inferno)\n"
+        "2. 🎯 **Rekomendasi Entry Point & Pasukan** (Saran meta terkini misal: Root Rider Spam, QC Lalo, Super Bowler Smash)\n"
+        "3. 📢 **Saran Untuk Attacker** (Tips singkat mengeksekusi serangan ini)"
+    )
+
+    client = genai.Client(api_key=api_key)
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            response = await client.aio.models.generate_content(
+                model='gemini-3.6-flash',
+                contents=[types.Part.from_bytes(data=image_bytes, mime_type='image/jpeg'), prompt]
+            )
+            return response.text
+        except Exception as e:
+            if "503" in str(e) or "UNAVAILABLE" in str(e):
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+            logger.error(f"Error Visual Strategy: {e}")
+            return "❌ Server AI sedang kelebihan beban. Mohon coba beberapa menit lagi."

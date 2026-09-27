@@ -10,8 +10,6 @@ import logging
 import asyncio
 
 logger = logging.getLogger('bot.setup')
-
-# ID Discord Founder (Ubah jika ID kamu berbeda)
 MY_DISCORD_ID = "1398954695137038339"
 
 class SetupCommands(commands.Cog):
@@ -19,9 +17,9 @@ class SetupCommands(commands.Cog):
         self.bot = bot
         self.coc = CoCClient()
 
-    @app_commands.command(name="setup", description="Mengikat bot ke Clan CoC untuk server ini (Contoh: /setup #2YQUQ...)")
+    @app_commands.command(name="setup", description="Mengikat bot ke Clan CoC (Contoh: /setup #2YQUQ...)")
     @app_commands.checks.has_permissions(administrator=True)
-    async def setup_clan(self, interaction: discord.Interaction, clan_tag: str):
+    async def setup_clan(self, interaction: discord.Interaction, clan_tag: str, alert_channel: discord.TextChannel = None):
         await interaction.response.defer()
         
         clan_data = await self.coc.get_clan_info(clan_tag)
@@ -30,7 +28,8 @@ class SetupCommands(commands.Cog):
 
         clan_name = clan_data['name']
         guild_id = str(interaction.guild_id)
-        user_id = str(interaction.user.id) # Fixed: interaction.user
+        user_id = str(interaction.user.id)
+        channel_id = str(alert_channel.id) if alert_channel else None
 
         db = get_db()
         try:
@@ -38,18 +37,25 @@ class SetupCommands(commands.Cog):
             if config:
                 config.clan_tag = clan_tag
                 config.setup_by = user_id
+                # Update alert channel
+                if hasattr(config, 'alert_channel_id'):
+                    config.alert_channel_id = channel_id
             else:
                 config = ServerConfig(guild_id=guild_id, clan_tag=clan_tag, setup_by=user_id)
+                if hasattr(config, 'alert_channel_id'):
+                    config.alert_channel_id = channel_id
                 db.add(config)
                 
             db.commit()
             
             embed = discord.Embed(title="✅ Setup Berhasil!", description=f"Bot diikat ke Clan **{clan_name}**.", color=discord.Color.green())
             embed.add_field(name="Clan Tag", value=clan_tag, inline=True)
+            if channel_id:
+                embed.add_field(name="Alert Channel", value=f"<#{channel_id}>", inline=True)
             embed.set_footer(text="Menyinkronkan data ke database AI...")
             
             await interaction.followup.send(embed=embed)
-            asyncio.create_task(sync_all_clans())
+            asyncio.create_task(sync_all_clans(self.bot))
             
         except Exception as e:
             db.rollback()
@@ -58,9 +64,8 @@ class SetupCommands(commands.Cog):
         finally:
             db.close()
 
-    @app_commands.command(name="grant-pro", description="[ADMIN ONLY] Aktifkan lisensi berbayar ke server")
+    @app_commands.command(name="grant-pro", description="[ADMIN ONLY] Aktifkan lisensi berbayar")
     async def grant_pro(self, interaction: discord.Interaction, guild_id: str, tier: str, days: int):
-        # Cek apakah pengirim command adalah Founder
         if str(interaction.user.id) != MY_DISCORD_ID:
             return await interaction.response.send_message("❌ Command ini khusus Owner Ixiera!", ephemeral=True)
 
@@ -72,11 +77,10 @@ class SetupCommands(commands.Cog):
                 return await interaction.followup.send(f"❌ Server ID `{guild_id}` belum pernah melakukan `/setup`.")
 
             now = datetime.now()
-            # Jika lisensi masih aktif, tambahkan dari tanggal expired sebelumnya
             base_date = config.expired_at if (config.expired_at and config.expired_at > now) else now
             new_expired = base_date + timedelta(days=days)
 
-            config.tier = tier.lower() # Option: 'standar' atau 'ai_pro'
+            config.tier = tier.lower()
             config.expired_at = new_expired
             db.commit()
 
@@ -86,10 +90,8 @@ class SetupCommands(commands.Cog):
             embed.add_field(name="Aktif Sampai", value=new_expired.strftime("%d %B %Y %H:%M"), inline=False)
             
             await interaction.followup.send(embed=embed)
-            logger.info(f"Admin granted tier {tier} to guild {guild_id} for {days} days.")
         except Exception as e:
             db.rollback()
-            logger.error(f"Gagal grant pro: {e}")
             await interaction.followup.send("❌ Gagal mengupdate lisensi di database.")
         finally:
             db.close()

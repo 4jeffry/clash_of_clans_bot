@@ -17,6 +17,31 @@ class WarCommands(commands.Cog):
             return config.clan_tag if config else None
         finally:
             db.close()
+          
+    @app_commands.command(name="cwl", description="Cek status & grup Clan War League (CWL) saat ini")
+    async def cwl_status(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        clan_tag = self.get_clan_tag(interaction.guild_id)
+        if not clan_tag:
+            return await interaction.followup.send("❌ Server ini belum di-setup!")
+        
+        cwl_data = await self.coc.get_cwl_group(clan_tag)
+        if not cwl_data or cwl_data.get('state') == 'notInWar':
+            return await interaction.followup.send("🛡️ Clan tidak sedang dalam masa Clan War League (CWL).")
+        
+        state = cwl_data.get('state', 'Unknown')
+        season = cwl_data.get('season', 'Unknown')
+        clans = cwl_data.get('clans', [])
+        
+        embed = discord.Embed(title=f"🏆 Clan War League: Musim {season}", color=discord.Color.purple())
+        embed.add_field(name="Status", value=state.capitalize(), inline=False)
+        
+        # List 8 clan yang berada dalam grup CWL yang sama
+        clan_names = [c.get('name') for c in clans]
+        if clan_names:
+            embed.add_field(name="Grup CWL (8 Clan)", value="\n".join([f"• {name}" for name in clan_names]), inline=False)
+            
+        await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="warstatus", description="Melihat status Clan War saat ini")
     async def warstatus(self, interaction: discord.Interaction):

@@ -20,17 +20,19 @@ class CustomHelp(commands.Cog):
             color=discord.Color.from_rgb(88, 101, 242)
         )
 
-        # 🟢 TIER 1: FREE
+                # 🟢 TIER 1: FREE
         embed.add_field(
             name="🟢 **TIER FREE (Fitur Dasar)**",
             value=(
                 "• `/donations` — Top 5 donatur tertinggi clan\n"
                 "• `/inactive` — Cek member pasif / donasi terendah\n"
                 "• `/warstatus` — Status bintang & destruction war saat ini\n"
+                "• `/cwl` — Cek status & daftar clan di grup Clan War League\n"
                 "• `/clanmembers` — List struktur jabatan clan"
             ),
             inline=False
         )
+
 
         # 🔵 TIER 2: STANDAR (Rp10k/bln)
         embed.add_field(
@@ -47,16 +49,18 @@ class CustomHelp(commands.Cog):
             inline=False
         )
 
-        # 🟣 TIER 3: AI PRO (Rp30k/bln)
+                # 🟣 TIER 3: AI PRO (Rp30k/bln)
         embed.add_field(
             name="🟣 **TIER AI PRO — Rp30.000/bln (Executive AI Consultant)**",
             value=(
                 "• *Semua Fitur Tier Standar +*\n"
-                "• `/ai-audit` — Deep Audit Gemini: Skor kesehatan clan, rekomendasi kick member pensi, & action plan\n"
-                "• `/war-strategy` — Konsultan Taktik Gemini: Analisis kelemahan lawan & draf broadcast chat CoC"
+                "• `/ai-audit` — Konsultasi Niki AI: Skor kesehatan clan & fokus pembinaan\n"
+                "• `/war-strategy` — Analisis agregat war saat ini & rotasi attack (mirror/cleanup)\n"
+                "• `/base-scan` — Upload screenshot base lawan untuk analisis titik lemah & meta terkini"
             ),
             inline=False
         )
+
 
         # ⚙️ SYSTEM & UPGRADE
         embed.add_field(

@@ -76,3 +76,22 @@ class CoCClient:
                 error_text = await response.text()
                 logger.error(f"[CoC API Error WarLog] Status: {response.status} | URL: {url} | Detail: {error_text}")
                 return []
+                  async def get_cwl_group(self, clan_tag: str):
+        if not clan_tag:
+            logger.error("CLAN_TAG kosong di environment variable.")
+            return None
+
+        url = f"{self.base_url}/clans/{self._format_tag(clan_tag)}/currentwar/leaguegroup"
+        
+        async with aiohttp.ClientSession(headers=self._get_headers()) as session:
+            async with session.get(url) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return data
+                elif response.status == 404:
+                    return None # Clan tidak sedang ikut CWL
+                
+                error_text = await response.text()
+                logger.error(f"[CoC API Error CWL] Status: {response.status} | URL: {url} | Detail: {error_text}")
+                return None
+
