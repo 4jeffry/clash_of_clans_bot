@@ -10,13 +10,21 @@ class CustomHelp(commands.Cog):
     async def help_command(self, interaction: discord.Interaction):
         await interaction.response.defer()
 
+        # Ambil semua slash command yang terdaftar untuk mendapatkan ID-nya secara dinamis
+        cmd_map = {}
+        for cmd in self.bot.tree.get_commands():
+            cmd_map[cmd.name] = f"</{cmd.name}:{cmd.id}>" if hasattr(cmd, 'id') and cmd.id else f"`/{cmd.name}`"
+
+        def get_cmd(name):
+            return cmd_map.get(name, f"`/{name}`")
+
         embed = discord.Embed(
             title="⚔️ Panduan & Tier Paket Ixiera CoC Bot",
             description=(
                 "Selamat datang di **Ixiera CoC Bot**!\n"
-                "Gunakan Slash Command (`/`) di bawah ini sesuai dengan tier lisensi server kamu.\n\n"
+                "Gunakan Slash Command di bawah ini sesuai dengan tier lisensi server kamu.\n\n"
                 "🌐 **Website:** [ixiera.id](https://ixiera.id)\n"
-                "💬 **Upgrade Lisensi / Support:** [Chat WhatsApp Founder](https://wa.me/6285736048626)\n"
+                "💬 **Upgrade Lisensi / Support:** [Chat WhatsApp Admin](https://wa.me/6285736048626)\n"
                 "───────────────"
             ),
             color=discord.Color.from_rgb(88, 101, 242)
@@ -24,42 +32,42 @@ class CustomHelp(commands.Cog):
 
         # 🟢 TIER 1: FREE
         embed.add_field(
-            name="🟢 **TIER FREE (Fitur Dasar)**",
+            name="🟢 **TIER FREE (Fitur Dasar Gratis)**",
             value=(
-                "• `/donations` — Top 5 donatur tertinggi clan\n"
-                "• `/inactive` — Cek member pasif / donasi terendah\n"
-                "• `/warstatus` — Status bintang & destruction war saat ini\n"
-                "• `/cwl` — Cek status & daftar clan di grup Clan War League\n"
-                "• `/clanmembers` — List struktur jabatan clan"
+                f"• {get_cmd('donations')} — Top 5 donatur tertinggi clan\n"
+                f"• {get_cmd('inactive')} — Cek member pasif / donasi terendah\n"
+                f"• {get_cmd('warstatus')} — Status bintang & destruction war saat ini\n"
+                f"• {get_cmd('cwl')} — Cek status & daftar clan di grup Clan War League\n"
+                f"• {get_cmd('clanmembers')} — List struktur jabatan clan"
             ),
             inline=False
         )
 
-        # 🔵 TIER 2: STANDAR (Rp10k/bln)
+        # 🔵 TIER 2: STANDAR (Rp10.000/bulan)
         embed.add_field(
-            name="🔵 **TIER STANDAR — Rp10.000/bln (Full Utility & Automation)**",
+            name="🔵 **TIER STANDAR — Rp10.000/bulan (Full Utility & Automation)**",
             value=(
                 "• *Semua Fitur Tier Free +*\n"
-                "• `/racewar` — Klasemen stars perang aktif / perang terakhir\n"
-                "• `/racecwl` — Klasemen akumulasi stars CWL bulanan\n"
-                "• `/givereward` — Tandai & berikan reward ke member\n"
-                "• `/rewardhistory` — Histori riwayat reward yang pernah dibagikan\n"
-                "• `/memberstats` — Detail statistik 1 member\n"
-                "• `/compare` — Perbandingan statistik 2 member\n"
-                "• `/leaderboard`, `/wartime`, `/thcomposition`\n"
+                f"• {get_cmd('racewar')} — Klasemen stars perang aktif / perang terakhir\n"
+                f"• {get_cmd('racecwl')} — Klasemen akumulasi stars CWL bulanan\n"
+                f"• {get_cmd('givereward')} — Tandai & berikan reward ke member\n"
+                f"• {get_cmd('rewardhistory')} — Histori riwayat reward yang pernah dibagikan\n"
+                f"• {get_cmd('memberstats')} — Detail statistik 1 member\n"
+                f"• {get_cmd('compare')} — Perbandingan statistik 2 member\n"
+                f"• {get_cmd('leaderboard')}, {get_cmd('wartime')}, {get_cmd('thcomposition')}\n"
                 "• 🔔 **Auto Alert** — Notifikasi member keluar clan & ping sisa waktu war"
             ),
             inline=False
         )
 
-        # 🟣 TIER 3: AI PRO (Rp30k/bln)
+        # 🟣 TIER 3: AI PRO (Rp30.000/bulan)
         embed.add_field(
-            name="🟣 **TIER AI PRO — Rp30.000/bln (Executive AI Consultant)**",
+            name="🟣 **TIER AI PRO — Rp30.000/bulan (Executive AI Consultant)**",
             value=(
                 "• *Semua Fitur Tier Standar +*\n"
-                "• `/ai-audit` — Konsultasi Niki AI: Skor kesehatan clan & fokus pembinaan\n"
-                "• `/war-strategy` — Analisis agregat war saat ini & rotasi attack\n"
-                "• `/base-scan` — Upload screenshot base lawan untuk analisis titik lemah & meta"
+                f"• {get_cmd('ai-audit')} — Konsultasi Niki AI: Skor kesehatan clan & fokus pembinaan\n"
+                f"• {get_cmd('war-strategy')} — Analisis agregat war saat ini & rotasi attack\n"
+                f"• {get_cmd('base-scan')} — Upload screenshot base lawan untuk analisis titik lemah & meta"
             ),
             inline=False
         )
@@ -67,19 +75,18 @@ class CustomHelp(commands.Cog):
         # ⚙️ SYSTEM
         embed.add_field(
             name="⚙️ **Sistem & Koneksi**",
-            value="• `/setup [clan_tag] [channel_notif]` — Hubungkan bot ke clan CoC",
+            value=f"• {get_cmd('setup')} `[clan_tag] [channel_notif]` — Hubungkan bot ke clan CoC",
             inline=False
         )
 
-        # FOOTER (Cukup Branding Teks, karena footer tidak mendukung clickable link)
         embed.set_footer(
             text="Ixiera.id — Operating System Studio"
         )
 
-        # OPSIONAL: Tambahkan Tombol Klik Langsung ke WhatsApp di Bawah Embed
+        # TOMBOL CHAT ADMIN WA & WEBSITE
         view = discord.ui.View()
         wa_button = discord.ui.Button(
-            label="Hubungi WhatsApp Founder", 
+            label="Hubungi WhatsApp Admin", 
             url="https://wa.me/6285736048626", 
             style=discord.ButtonStyle.link,
             emoji="💬"
