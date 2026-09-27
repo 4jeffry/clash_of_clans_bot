@@ -25,7 +25,7 @@ def _check_pro_access(guild_id: str):
             return None, (
                 "⚠️ **Akses AI Pro Belum Aktif**\n"
                 "Fitur analisis mendalam ini khusus untuk **Tier AI Pro** (Rp30.000/bulan).\n"
-                "Hubungi Admin Ixiera (`ixiera.id`) untuk upgrade lisensi server kamu!"
+                "Hubungi Admin untuk upgrade lisensi server kamu!"
             )
         return config, None
     finally:
@@ -65,7 +65,7 @@ async def run_ai_audit(guild_id: str) -> str:
         db.close()
 
     prompt = (
-        "Lu adalah Niki, Konsultan AI Manajemen Clan Clash of Clans dari ixiera.id.\n"
+        "Lu adalah Niki, Konsultan AI Manajemen Clan Clash of Clans.\n"
         "Gunakan gaya bahasa yang humble, suportif, dan bersahabat layaknya seorang mentor.\n"
         "Fokuslah pada pembinaan member. JANGAN menyarankan kick secara agresif, berikan saran teguran halus atau cara leader merangkul member yang sedang pasif/sibuk di dunia nyata.\n\n"
         f"{context}\n\n"
@@ -113,7 +113,7 @@ async def run_war_strategy(guild_id: str, war_data: dict) -> str:
     )
 
     prompt = (
-        "Lu adalah Niki, War Strategist CoC dari ixiera.id yang humble.\n"
+        "Lu adalah Niki, War Strategist CoC yang humble.\n"
         "Berdasarkan kondisi agregat perang di bawah ini, berikan saran taktik rotasi serangan secara objektif:\n\n"
         f"{context}\n\n"
         "Beri format respons:\n"
@@ -149,7 +149,7 @@ async def run_visual_strategy(guild_id: str, image_bytes: bytes, detail_pasukan:
     info_pasukan = f"\nINFO PASUKAN / EQUIPMENT ATTACKER:\n{detail_pasukan}\n" if detail_pasukan else ""
 
     prompt = (
-        "Lu adalah Niki, War Strategist Clash of Clans yang humble dan suportif dari ixiera.id.\n"
+        "Lu adalah Niki, War Strategist Clash of Clans yang humble dan suportif.\n"
         "Leader baru saja mengirimkan screenshot base lawan yang akan diserang."
         f"{info_pasukan}\n"
         "Analisis gambar base tersebut (dan pertimbangkan info pasukan/equipment jika dicantumkan). Format respons:\n"
@@ -174,3 +174,100 @@ async def run_visual_strategy(guild_id: str, image_bytes: bytes, detail_pasukan:
                     continue
             logger.error(f"Error Visual Strategy: {e}")
             return "❌ Server AI sedang kelebihan beban. Mohon coba beberapa menit lagi."
+
+async def run_ai_screen(guild_id: str, player_data: dict) -> str:
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        return "❌ API Key AI belum dikonfigurasi."
+
+    config, err_msg = _check_pro_access(guild_id)
+    if err_msg:
+        return err_msg
+
+    name = player_data.get('name', 'Unknown')
+    tag = player_data.get('tag', '')
+    th = player_data.get('townHallLevel', 0)
+    donations = player_data.get('donations', 0)
+    received = player_data.get('donationsReceived', 0)
+    war_stars = player_data.get('warStars', 0)
+    heroes = player_data.get('heroes', [])
+
+    hero_info = ", ".join([f"{h['name']} (Lv {h['level']})" for h in heroes if h.get('village') == 'home'])
+
+    prompt = f"""
+    Kamu adalah Niki, AI Assistant Clan Clash of Clans.
+    Tugasmu: Analisis profil calon member.
+    Gaya bahasa: Santai, humble, singkat, padat, dan jelas. JANGAN gunakan kata "beban". Berikan evaluasi yang objektif namun suportif.
+
+    Data Player:
+    - Nama: {name} ({tag})
+    - Town Hall: {th}
+    - Donasi Diberikan: {donations} | Diterima: {received}
+    - War Stars: {war_stars}
+    - Level Hero: {hero_info}
+
+    Format Output (Gunakan Markdown):
+    🔍 **Intel Rekrutmen — {name}** (TH {th})
+    • **Donasi:** [1 kalimat analisis rasio]
+    • **Kesiapan War:** [1 kalimat analisis level hero vs TH & war stars]
+    
+    📌 **Verdict:** [Pilih: 🟢 Gass Acc / ⚠️ Pantau Dulu / 🔴 Skip Aja]
+    💬 *Saran Niki:* [1 kalimat saran suportif untuk Leader]
+    """
+
+    client = genai.Client(api_key=api_key)
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            response = await client.aio.models.generate_content(model='gemini-3.6-flash', contents=prompt)
+            return response.text
+        except Exception as e:
+            if "503" in str(e) or "UNAVAILABLE" in str(e):
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+            logger.error(f"Error AI Screen: {e}")
+            return "❌ Server AI sedang sibuk. Coba beberapa menit lagi."
+
+async def run_ai_scout(guild_id: str, war_data: dict) -> str:
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        return "❌ API Key AI belum dikonfigurasi."
+
+    config, err_msg = _check_pro_access(guild_id)
+    if err_msg:
+        return err_msg
+
+    opponent = war_data.get('opponent', {})
+    members = opponent.get('members', [])
+    
+    prompt = f"""
+    Kamu adalah Niki, AI Assistant Clan Clash of Clans.
+    Tugasmu: Analisis susunan base musuh saat war.
+    Gaya bahasa: Santai, humble, singkat, padat, dan jelas.
+
+    Data Lawan:
+    - Nama Clan: {opponent.get('name')}
+    - Tag: {opponent.get('tag')}
+    - Jumlah Member: {len(members)}
+
+    Format Output (Gunakan Markdown):
+    ⚔️ **Intel War Lawan — {opponent.get('name')}**
+    🎯 **Target Empuk:** [1-2 kalimat sebutkan ciri base/TH lawan yang gampang diratakan]
+    ⚠️ **Waspada:** [1-2 kalimat sebutkan ciri base lawan yang pertahanannya max]
+    💡 **Taktik Niki:** [1 kalimat saran komposisi pasukan secara umum]
+    """
+
+    client = genai.Client(api_key=api_key)
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            response = await client.aio.models.generate_content(model='gemini-3.6-flash', contents=prompt)
+            return response.text
+        except Exception as e:
+            if "503" in str(e) or "UNAVAILABLE" in str(e):
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+            logger.error(f"Error AI Scout: {e}")
+            return "❌ Server AI sedang sibuk. Coba beberapa menit lagi."
