@@ -1,31 +1,52 @@
+import os
 import discord
+import aiohttp
+import urllib.parse
 from discord import app_commands
 from discord.ext import commands
-import urllib.parse
-from services.coc_client import fetch_coc_api  # Pakai helper CoC API client kamu yang sudah ada
+
+# Menggunakan model dan DB yang sudah pasti ada di sistem lu (berdasarkan scheduler.py)
+from services.db import get_db
+from models import ServerConfig
 
 class Capital(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
+    # Helper function untuk nembak API CoC Proxy langsung di dalam Cog
+    async def fetch_coc_api(self, endpoint):
+        token = os.getenv('COC_API_TOKEN')
+        url = f"https://cocproxy.royaleapi.dev/v1{endpoint}"
+        headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers) as resp:
+                if resp.status == 200:
+                    return await resp.json()
+                return None
+
+    # Helper function untuk ambil clan_tag dari database
+    def get_clan_tag(self, guild_id):
+        db = get_db()
+        try:
+            config = db.query(ServerConfig).filter(ServerConfig.guild_id == str(guild_id)).first()
+            if config:
+                return config.clan_tag
+            return None
+        finally:
+            db.close()
+
     @app_commands.command(name="capital", description="[FREE] Ringkasan statistik Clan Capital Raid Weekend terakhir")
     async def capital(self, interaction: discord.Interaction):
         await interaction.response.defer()
         
-        # Ambil tag clan dari config server
-        # (Sesuaikan dengan helper DB/config kamu, misal ambil dari database)
-        from services.db import get_server_config
-        config = await get_server_config(str(interaction.guild_id))
-        
-        if not config or not config.get("clan_tag"):
+        clan_tag = self.get_clan_tag(interaction.guild_id)
+        if not clan_tag:
             await interaction.followup.send("❌ Server ini belum terhubung ke clan CoC! Jalankan `/setup` terlebih dahulu.")
             return
 
-        clan_tag = config["clan_tag"]
         encoded_tag = urllib.parse.quote(clan_tag)
-        
-        # Call API CoC Raid Seasons
-        data = await fetch_coc_api(f"/clans/{encoded_tag}/capitalraidseasons")
+        data = await self.fetch_coc_api(f"/clans/{encoded_tag}/capitalraidseasons")
         
         if not data or "items" not in data or not data["items"]:
             await interaction.followup.send("❌ Data Clan Capital tidak ditemukan atau tidak ada log Raid Weekend.")
@@ -48,22 +69,18 @@ class Capital(commands.Cog):
     async def capitaldonations(self, interaction: discord.Interaction):
         await interaction.response.defer()
         
-        from services.db import get_server_config
-        config = await get_server_config(str(interaction.guild_id))
-        
-        if not config or not config.get("clan_tag"):
+        clan_tag = self.get_clan_tag(interaction.guild_id)
+        if not clan_tag:
             await interaction.followup.send("❌ Server belum terhubung ke clan! Gunakan `/setup`.")
             return
 
-        clan_tag = config["clan_tag"]
         encoded_tag = urllib.parse.quote(clan_tag)
+        clan_data = await self.fetch_coc_api(f"/clans/{encoded_tag}")
         
-        clan_data = await fetch_coc_api(f"/clans/{encoded_tag}")
         if not clan_data or "memberList" not in clan_data:
             await interaction.followup.send("❌ Gagal mengambil data member clan.")
             return
 
-        # Urutkan berdasarkan kontribusi Capital Gold terbanyak
         members = clan_data["memberList"]
         sorted_members = sorted(members, key=lambda x: x.get("clanCapitalContributions", 0), reverse=True)[:5]
 
@@ -84,17 +101,14 @@ class Capital(commands.Cog):
     async def raidstats(self, interaction: discord.Interaction):
         await interaction.response.defer()
         
-        from services.db import get_server_config
-        config = await get_server_config(str(interaction.guild_id))
-        
-        if not config or not config.get("clan_tag"):
+        clan_tag = self.get_clan_tag(interaction.guild_id)
+        if not clan_tag:
             await interaction.followup.send("❌ Server belum terhubung ke clan! Gunakan `/setup`.")
             return
 
-        clan_tag = config["clan_tag"]
         encoded_tag = urllib.parse.quote(clan_tag)
+        data = await self.fetch_coc_api(f"/clans/{encoded_tag}/capitalraidseasons")
         
-        data = await fetch_coc_api(f"/clans/{encoded_tag}/capitalraidseasons")
         if not data or "items" not in data or not data["items"]:
             await interaction.followup.send("❌ Data Raid Weekend tidak ditemukan.")
             return
@@ -106,7 +120,6 @@ class Capital(commands.Cog):
             await interaction.followup.send("ℹ️ Sesi Raid Weekend belum dimulai atau belum ada partisipan.")
             return
 
-        # Urutkan berdasarkan loot terbanyak
         sorted_participants = sorted(members, key=lambda x: x.get("capitalLoot", 0), reverse=True)[:10]
 
         desc = ""
