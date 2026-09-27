@@ -10,13 +10,19 @@ class CustomHelp(commands.Cog):
     async def help_command(self, interaction: discord.Interaction):
         await interaction.response.defer()
 
-        # Ambil semua slash command yang terdaftar untuk mendapatkan ID-nya secara dinamis
-        cmd_map = {}
-        for cmd in self.bot.tree.get_commands():
-            cmd_map[cmd.name] = f"</{cmd.name}:{cmd.id}>" if hasattr(cmd, 'id') and cmd.id else f"`/{cmd.name}`"
+        # FIX DIAGNOSIS: Tarik data Slash Command resmi (lengkap dengan ID) langsung dari server Discord
+        try:
+            fetched_cmds = await self.bot.tree.fetch_commands()
+            cmd_map = {cmd.name: cmd.id for cmd in fetched_cmds}
+        except Exception:
+            cmd_map = {}
 
+        # Fungsi helper buat ngubah jadi format <slash_command_bisa_diklik>
         def get_cmd(name):
-            return cmd_map.get(name, f"`/{name}`")
+            cmd_id = cmd_map.get(name)
+            if cmd_id:
+                return f"</{name}:{cmd_id}>"
+            return f"`/{name}`"
 
         embed = discord.Embed(
             title="⚔️ Panduan & Tier Paket Ixiera CoC Bot",
