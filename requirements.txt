@@ -6,3 +6,4 @@ APScheduler==3.10.4
 python-dotenv==1.0.1
 google-genai
 psycopg[binary]>=3.2.0
+python-dateutil
