@@ -14,7 +14,9 @@ class CustomHelp(commands.Cog):
             title="⚔️ Panduan & Tier Paket Ixiera CoC Bot",
             description=(
                 "Selamat datang di **Ixiera CoC Bot**!\n"
-                "Gunakan Slash Command (`/`) di bawah ini sesuai dengan tier lisensi server kamu.\n"
+                "Gunakan Slash Command (`/`) di bawah ini sesuai dengan tier lisensi server kamu.\n\n"
+                "🌐 **Website:** [ixiera.id](https://ixiera.id)\n"
+                "💬 **Upgrade Lisensi / Support:** [Chat WhatsApp Founder](https://wa.me/6285736048626)\n"
                 "───────────────"
             ),
             color=discord.Color.from_rgb(88, 101, 242)
@@ -69,12 +71,29 @@ class CustomHelp(commands.Cog):
             inline=False
         )
 
-        # FOOTER BRANDING + WA
+        # FOOTER (Cukup Branding Teks, karena footer tidak mendukung clickable link)
         embed.set_footer(
-            text="ixiera.id — Operating System Studio | WA: https://wa.me/6285736048626"
+            text="Ixiera.id — Operating System Studio"
         )
 
-        await interaction.followup.send(embed=embed)
+        # OPSIONAL: Tambahkan Tombol Klik Langsung ke WhatsApp di Bawah Embed
+        view = discord.ui.View()
+        wa_button = discord.ui.Button(
+            label="Hubungi WhatsApp Founder", 
+            url="https://wa.me/6285736048626", 
+            style=discord.ButtonStyle.link,
+            emoji="💬"
+        )
+        web_button = discord.ui.Button(
+            label="Kunjungi Ixiera.id", 
+            url="https://ixiera.id", 
+            style=discord.ButtonStyle.link,
+            emoji="🌐"
+        )
+        view.add_item(wa_button)
+        view.add_item(web_button)
+
+        await interaction.followup.send(embed=embed, view=view)
 
 async def setup(bot):
     await bot.add_cog(CustomHelp(bot))
