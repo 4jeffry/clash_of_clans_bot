@@ -22,6 +22,7 @@ class ClanBot(commands.Bot):
         super().__init__(command_prefix="!", intents=intents, help_command=None)
         
     async def setup_hook(self):
+        # 1. LOAD SEMUA COG DISINI SAJA, JANGAN SYNC DISINI
         for filename in os.listdir('./cogs'):
             if filename.endswith('.py') and not filename.startswith('__'):
                 try:
@@ -29,13 +30,6 @@ class ClanBot(commands.Bot):
                     logger.info(f'Loaded cog: {filename}')
                 except Exception as e:
                     logger.error(f'Failed to load cog {filename}: {e}')
-
-        # SYNC SLASH COMMANDS KE DISCORD
-        try:
-            synced = await self.tree.sync()
-            logger.info(f"Successfully synced {len(synced)} Slash Commands.")
-        except Exception as e:
-            logger.error(f"Failed to sync slash commands: {e}")
 
     async def on_ready(self):
         logger.info(f'Logged in as {self.user.name} (ID: {self.user.id})')
@@ -46,6 +40,13 @@ class ClanBot(commands.Bot):
         start_scheduler(self)
         
         await self.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="Clan Wars | /help"))
+        
+        # 2. PINDAHKAN TREE SYNC KE SINI SETELAH BOT BENAR-BENAR READY
+        try:
+            synced = await self.tree.sync()
+            logger.info(f"Successfully synced {len(synced)} Slash Commands globally.")
+        except Exception as e:
+            logger.error(f"Failed to sync slash commands: {e}")
 
 if __name__ == '__main__':
     if not TOKEN:
