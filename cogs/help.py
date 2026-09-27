@@ -20,7 +20,7 @@ class CustomHelp(commands.Cog):
             color=discord.Color.from_rgb(88, 101, 242)
         )
 
-                # 🟢 TIER 1: FREE
+        # 🟢 TIER 1: FREE
         embed.add_field(
             name="🟢 **TIER FREE (Fitur Dasar)**",
             value=(
@@ -33,48 +33,45 @@ class CustomHelp(commands.Cog):
             inline=False
         )
 
-
         # 🔵 TIER 2: STANDAR (Rp10k/bln)
         embed.add_field(
             name="🔵 **TIER STANDAR — Rp10.000/bln (Full Utility & Automation)**",
             value=(
                 "• *Semua Fitur Tier Free +*\n"
-                "• `/memberstats [nama]` — Detail statistik lengkap 1 member\n"
-                "• `/compare [m1] [m2]` — Perbandingan statistik 2 member\n"
-                "• `/leaderboard` — Ranking trophies tertinggi clan\n"
-                "• `/wartime` — Sisa waktu war & sisa attack yang belum dipakai\n"
-                "• `/thcomposition` — Breakdown jumlah member per level TH\n"
-                "• 🔔 **Auto War Alert** — Ping otomatis ke Leader/Co-Leader 2 jam sebelum war selesai (mengingatkan member in-game yang belum attack)"
+                "• `/racewar` — Klasemen stars perang aktif / perang terakhir\n"
+                "• `/racecwl` — Klasemen akumulasi stars CWL bulanan\n"
+                "• `/givereward` — Tandai & berikan reward ke member\n"
+                "• `/rewardhistory` — Histori riwayat reward yang pernah dibagikan\n"
+                "• `/memberstats` — Detail statistik 1 member\n"
+                "• `/compare` — Perbandingan statistik 2 member\n"
+                "• `/leaderboard`, `/wartime`, `/thcomposition`\n"
+                "• 🔔 **Auto Alert** — Notifikasi member keluar clan & ping sisa waktu war"
             ),
             inline=False
         )
 
-                # 🟣 TIER 3: AI PRO (Rp30k/bln)
+        # 🟣 TIER 3: AI PRO (Rp30k/bln)
         embed.add_field(
             name="🟣 **TIER AI PRO — Rp30.000/bln (Executive AI Consultant)**",
             value=(
                 "• *Semua Fitur Tier Standar +*\n"
                 "• `/ai-audit` — Konsultasi Niki AI: Skor kesehatan clan & fokus pembinaan\n"
-                "• `/war-strategy` — Analisis agregat war saat ini & rotasi attack (mirror/cleanup)\n"
-                "• `/base-scan` — Upload screenshot base lawan untuk analisis titik lemah & meta terkini"
+                "• `/war-strategy` — Analisis agregat war saat ini & rotasi attack\n"
+                "• `/base-scan` — Upload screenshot base lawan untuk analisis titik lemah & meta"
             ),
             inline=False
         )
 
-
-        # ⚙️ SYSTEM & UPGRADE
+        # ⚙️ SYSTEM
         embed.add_field(
-            name="⚙️ **Sistem & Upgrade Lisensi**",
-            value=(
-                "• `/setup [clan_tag]` — Hubungkan bot ke clan CoC (Admin Only)\n"
-                "💳 *Untuk upgrade ke Tier Standar/Pro, hubungi Admin (`ixiera.id`)*"
-            ),
+            name="⚙️ **Sistem & Koneksi**",
+            value="• `/setup [clan_tag] [channel_notif]` — Hubungkan bot ke clan CoC",
             inline=False
         )
 
+        # FOOTER BRANDING + WA
         embed.set_footer(
-            text="ixiera.id • Operating System Studio",
-            icon_url=self.bot.user.display_avatar.url if self.bot.user else None
+            text="ixiera.id — Operating System Studio | WA: https://wa.me/6285736048626"
         )
 
         await interaction.followup.send(embed=embed)

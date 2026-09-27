@@ -1,3 +1,4 @@
+import os
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -10,12 +11,15 @@ import logging
 import asyncio
 
 logger = logging.getLogger('bot.setup')
-MY_DISCORD_ID = "1398954695137038339"
 
 class SetupCommands(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.coc = CoCClient()
+
+    def _get_owner_id(self):
+        # Ambil dari environment Railway, jika tidak ada fallback ke ID kamu
+        return os.getenv("MY_DISCORD_ID", "1398954695137038339").strip()
 
     @app_commands.command(name="setup", description="Mengikat bot ke Clan CoC (Contoh: /setup #2YQUQ...)")
     @app_commands.checks.has_permissions(administrator=True)
@@ -37,7 +41,6 @@ class SetupCommands(commands.Cog):
             if config:
                 config.clan_tag = clan_tag
                 config.setup_by = user_id
-                # Update alert channel
                 if hasattr(config, 'alert_channel_id'):
                     config.alert_channel_id = channel_id
             else:
@@ -65,11 +68,13 @@ class SetupCommands(commands.Cog):
             db.close()
 
     @app_commands.command(name="grant-pro", description="[ADMIN ONLY] Aktifkan lisensi berbayar")
+    @app_commands.default_permissions(administrator=True) # Sembunyikan dari user biasa
     async def grant_pro(self, interaction: discord.Interaction, guild_id: str, tier: str, days: int):
-        if str(interaction.user.id) != MY_DISCORD_ID:
+        # Verifikasi Owner dari Environment Variable
+        if str(interaction.user.id) != self._get_owner_id():
             return await interaction.response.send_message("❌ Command ini khusus Owner Ixiera!", ephemeral=True)
 
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True) # Pesan rahasia (ephemeral)
         db = get_db()
         try:
             config = db.query(ServerConfig).filter(ServerConfig.guild_id == guild_id).first()

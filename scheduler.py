@@ -5,7 +5,8 @@ import dateutil.parser
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from services.coc_client import CoCClient
 from services.db import get_db
-from models import ClanMember, ServerConfig, WarHistory
+# FIX: Tambahkan import War, WarAttack, dan CWLSeason
+from models import ClanMember, ServerConfig, WarHistory, War, WarAttack, CWLSeason
 
 logger = logging.getLogger('bot.scheduler')
 coc = CoCClient()
@@ -36,14 +37,12 @@ async def sync_all_clans(bot):
                 api_tags = [m['tag'] for m in clan_data['memberList']]
                 db_members = db.query(ClanMember).filter(ClanMember.clan_tag == clan_tag).all()
                 
-                # Cek member yang ada di DB tapi hilang di Game (Leave)
                 for db_m in db_members:
                     if db_m.tag not in api_tags:
                         if alert_channel:
                             await alert_channel.send(f"🚨 **Member Leave Alert:** `{db_m.name}` (TH {db_m.townhall_level}) baru saja keluar dari clan.")
-                        db.delete(db_m) # Hapus dari database agar tidak alert dua kali
+                        db.delete(db_m)
                 
-                # Update member yang masih ada
                 for member in clan_data['memberList']:
                     db_member = db.query(ClanMember).filter(
                         ClanMember.tag == member['tag'],
@@ -62,38 +61,112 @@ async def sync_all_clans(bot):
                     db_member.last_updated = datetime.utcnow()
             
             # ==========================================
-            # 2. AUTO WAR ALERT
+            # 2. AUTO WAR ALERT & SINKRONISASI RACE DATA
             # ==========================================
             war_data = await coc.get_current_war(clan_tag)
-            if war_data and war_data.get('state') == 'inWar' and alert_channel:
-                try:
-                    end_time_str = war_data.get('endTime')
-                    # Parse waktu format CoC (CoC API menggunakan format khusus T...Z)
-                    end_time = dateutil.parser.isoparse(end_time_str.replace("T", "T").replace("Z", "+00:00"))
-                    now = datetime.now(timezone.utc)
-                    time_diff = end_time - now
+            if war_data:
+                # [A] LOGIKA AUTO WAR ALERT
+                if war_data.get('state') == 'inWar' and alert_channel:
+                    try:
+                        end_time_str = war_data.get('endTime')
+                        end_time = dateutil.parser.isoparse(end_time_str.replace("T", "T").replace("Z", "+00:00"))
+                        now = datetime.now(timezone.utc)
+                        time_diff = end_time - now
+                        
+                        if 3600 <= time_diff.total_seconds() <= 7200:
+                            clan_info = war_data.get('clan', {})
+                            members = clan_info.get('members', [])
+                            
+                            no_attackers = []
+                            for m in members:
+                                attacks = m.get('attacks', [])
+                                max_attacks = war_data.get('attacksPerMember', 2)
+                                if len(attacks) < max_attacks:
+                                    no_attackers.append(f"{m.get('name')} ({max_attacks - len(attacks)} Attack Sisa)")
+                            
+                            if no_attackers:
+                                alert_msg = "⚔️ **AUTO WAR ALERT** ⚔️\nWar akan berakhir dalam waktu kurang dari 2 Jam!\n\n**Member belum attack:**\n"
+                                alert_msg += "\n".join([f"• {name}" for name in no_attackers])
+                                await alert_channel.send(alert_msg)
+                    except Exception as e:
+                        logger.error(f"Gagal parse waktu war untuk alert: {e}")
+
+                # [B] LOGIKA SINKRONISASI BINTANG UNTUK FITUR RACE WAR & CWL
+                if war_data.get('state') in ['inWar', 'warEnded']:
+                    opponent = war_data.get('opponent', {})
+                    clan_info = war_data.get('clan', {})
                     
-                    # Alert jika sisa waktu war antara 1 hingga 2 jam
-                    if 3600 <= time_diff.total_seconds() <= 7200:
-                        clan_info = war_data.get('clan', {})
-                        members = clan_info.get('members', [])
+                    if opponent.get('tag'):
+                        # Cek apakah clan sedang dalam periode CWL bulan ini
+                        cwl_group = await coc.get_cwl_group(clan_tag)
+                        is_cwl = False
+                        cwl_season_id = None
                         
-                        no_attackers = []
-                        for m in members:
-                            attacks = m.get('attacks', [])
-                            max_attacks = war_data.get('attacksPerMember', 2)
-                            if len(attacks) < max_attacks:
-                                no_attackers.append(f"{m.get('name')} ({max_attacks - len(attacks)} Attack Sisa)")
+                        if cwl_group and cwl_group.get('state') != 'notInWar':
+                            is_cwl = True
+                            current_month = datetime.now().strftime('%Y-%m')
+                            
+                            # Buat season baru di DB jika bulan berganti
+                            season = db.query(CWLSeason).filter(
+                                CWLSeason.clan_tag == clan_tag, 
+                                CWLSeason.month == current_month
+                            ).first()
+                            
+                            if not season:
+                                season = CWLSeason(month=current_month, clan_tag=clan_tag)
+                                db.add(season)
+                                db.commit()
+                            cwl_season_id = season.id
                         
-                        if no_attackers:
-                            alert_msg = "⚔️ **AUTO WAR ALERT** ⚔️\nWar akan berakhir dalam waktu kurang dari 2 Jam!\n\n**Member belum attack:**\n"
-                            alert_msg += "\n".join([f"• {name}" for name in no_attackers])
-                            await alert_channel.send(alert_msg)
-                except Exception as e:
-                    logger.error(f"Gagal parse waktu war untuk alert: {e}")
+                        # Sinkronisasi Master War (Tabel `wars`)
+                        db_war = db.query(War).filter(
+                            War.clan_tag == clan_tag,
+                            War.opponent_tag == opponent.get('tag')
+                        ).order_by(War.id.desc()).first()
+                        
+                        if not db_war or (db_war.state == 'warEnded' and war_data.get('state') != 'warEnded'):
+                            db_war = War(
+                                clan_tag=clan_tag,
+                                opponent_tag=opponent.get('tag'),
+                                opponent_name=opponent.get('name'),
+                                team_size=war_data.get('teamSize', 0),
+                                state=war_data.get('state'),
+                                is_cwl=is_cwl,
+                                cwl_season_id=cwl_season_id
+                            )
+                            db.add(db_war)
+                            db.commit()
+                        else:
+                            if db_war.state != war_data.get('state'):
+                                db_war.state = war_data.get('state')
+                                db.commit()
+                        
+                        # Sinkronisasi Detail Serangan (Tabel `war_attacks`)
+                        if clan_info.get('members'):
+                            for m in clan_info['members']:
+                                if 'attacks' in m:
+                                    for idx, atk in enumerate(m['attacks']):
+                                        db_atk = db.query(WarAttack).filter(
+                                            WarAttack.war_id == db_war.id,
+                                            WarAttack.attacker_tag == m.get('tag'),
+                                            WarAttack.order_num == (idx + 1)
+                                        ).first()
+                                        
+                                        if not db_atk:
+                                            new_atk = WarAttack(
+                                                war_id=db_war.id,
+                                                attacker_tag=m.get('tag'),
+                                                attacker_name=m.get('name'),
+                                                defender_tag=atk.get('defenderTag'),
+                                                stars=atk.get('stars', 0),
+                                                destruction_percentage=atk.get('destructionPercentage', 0),
+                                                order_num=(idx + 1)
+                                            )
+                                            db.add(new_atk)
+                            db.commit()
 
             # ==========================================
-            # 3. WAR HISTORY
+            # 3. WAR HISTORY (Tarik 5 War Terakhir)
             # ==========================================
             war_log = await coc.get_war_log(clan_tag)
             if isinstance(war_log, list) and len(war_log) > 0:
@@ -126,7 +199,6 @@ async def sync_all_clans(bot):
 
 def start_scheduler(bot):
     scheduler = AsyncIOScheduler()
-    # Interval tetap 1 jam agar war alert tidak terlewat
     scheduler.add_job(sync_all_clans, 'interval', hours=1, args=[bot], id='sync_all_clans_job')
     scheduler.start()
     logger.info("Scheduler aktif (Interval: 1 Jam).")

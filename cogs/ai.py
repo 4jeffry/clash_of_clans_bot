@@ -46,14 +46,19 @@ class AICog(commands.Cog):
         result = await run_war_strategy(str(interaction.guild_id), war_data)
         await self.send_long_message(interaction, result)
 
-    @app_commands.command(name="base-scan", description="[AI PRO] Upload foto base lawan untuk analisis taktik meta")
-    async def ai_base_scan(self, interaction: discord.Interaction, foto_base: discord.Attachment):
+    @app_commands.command(name="base-scan", description="[AI PRO] Upload foto base lawan & opsional ketik combo/equipment")
+    async def ai_base_scan(
+        self, 
+        interaction: discord.Interaction, 
+        foto_base: discord.Attachment,
+        detail_pasukan: str = None
+    ):
         await interaction.response.defer()
         if not foto_base.content_type.startswith('image/'):
             return await interaction.followup.send("❌ Tolong upload file berupa gambar (screenshot base).")
             
         image_bytes = await foto_base.read()
-        result = await run_visual_strategy(str(interaction.guild_id), image_bytes)
+        result = await run_visual_strategy(str(interaction.guild_id), image_bytes, detail_pasukan)
         await self.send_long_message(interaction, result)
 
 async def setup(bot):

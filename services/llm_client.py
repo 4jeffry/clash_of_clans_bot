@@ -89,7 +89,6 @@ async def run_ai_audit(guild_id: str) -> str:
             logger.error(f"Error AI Audit: {e}")
             return "❌ Server AI sedang kelebihan beban. Mohon coba beberapa menit lagi."
 
-# FUNGSI LAMA DIKEMBALIKAN: Analisis Agregat API
 async def run_war_strategy(guild_id: str, war_data: dict) -> str:
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
@@ -137,8 +136,8 @@ async def run_war_strategy(guild_id: str, war_data: dict) -> str:
             logger.error(f"Error War Strategy: {e}")
             return "❌ Server AI sedang kelebihan beban. Mohon coba beberapa menit lagi."
 
-# FUNGSI BARU: Analisis Visual Base Lawan
-async def run_visual_strategy(guild_id: str, image_bytes: bytes) -> str:
+# FUNGSI VISION: Screenshot Base + Opsional Input Combo/Pasukan
+async def run_visual_strategy(guild_id: str, image_bytes: bytes, detail_pasukan: str = None) -> str:
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         return "❌ API Key AI belum dikonfigurasi."
@@ -147,13 +146,16 @@ async def run_visual_strategy(guild_id: str, image_bytes: bytes) -> str:
     if err_msg:
         return err_msg
 
+    info_pasukan = f"\nINFO PASUKAN / EQUIPMENT ATTACKER:\n{detail_pasukan}\n" if detail_pasukan else ""
+
     prompt = (
         "Lu adalah Niki, War Strategist Clash of Clans yang humble dan suportif dari ixiera.id.\n"
-        "Leader baru saja mengirimkan screenshot base lawan yang akan diserang.\n"
-        "Analisis gambar base tersebut dan berikan panduan taktik. Format respons:\n"
-        "1. 🏰 **Analisis Base Lawan** (Titik lemah, posisi Town Hall, Eagle Artillery, Inferno)\n"
-        "2. 🎯 **Rekomendasi Entry Point & Pasukan** (Saran meta terkini misal: Root Rider Spam, QC Lalo, Super Bowler Smash)\n"
-        "3. 📢 **Saran Untuk Attacker** (Tips singkat mengeksekusi serangan ini)"
+        "Leader baru saja mengirimkan screenshot base lawan yang akan diserang."
+        f"{info_pasukan}\n"
+        "Analisis gambar base tersebut (dan pertimbangkan info pasukan/equipment jika dicantumkan). Format respons:\n"
+        "1. 🏰 **Analisis Base Lawan** (Titik lemah, posisi Town Hall, Eagle Artillery, Inferno, Monolith, dll)\n"
+        "2. 🎯 **Rekomendasi Entry Point & Taktik** (Saran eksekusi terbaik menggunakan meta terkini atau pasukan yang dimiliki)\n"
+        "3. 📢 **Saran Eksekusi Hero & Spell** (Tips timing skill hero/equipment dan pemakaian spell)"
     )
 
     client = genai.Client(api_key=api_key)
