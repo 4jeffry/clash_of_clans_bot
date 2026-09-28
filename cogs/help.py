@@ -11,7 +11,6 @@ class CustomHelp(commands.Cog):
         await interaction.response.defer()
 
         try:
-            # Mengambil Global Commands asli tanpa filter guild
             fetched_cmds = await self.bot.tree.fetch_commands()
             cmd_map = {cmd.name: cmd.id for cmd in fetched_cmds}
         except Exception:
@@ -53,8 +52,8 @@ class CustomHelp(commands.Cog):
             name="🔵 **TIER STANDAR — Rp10.000/bulan**",
             value=(
                 "• *Semua Fitur Tier Free +*\n"
-                f"• {get_cmd('racewar')} — Klasemen stars perang aktif\n"
-                f"• {get_cmd('racecwl')} — Klasemen akumulasi stars CWL\n"
+                f"• {get_cmd('racewar')} — Klasemen stars perang aktif (Offense & Defense)\n"
+                f"• {get_cmd('racecwl')} — Klasemen akumulasi stars CWL (Offense & Defense)\n"
                 f"• {get_cmd('givereward')} — Berikan reward ke member\n"
                 f"• {get_cmd('rewardhistory')} — Histori pembagian reward\n"
                 f"• {get_cmd('memberstats')} — Detail statistik 1 member\n"
@@ -66,9 +65,11 @@ class CustomHelp(commands.Cog):
         )
 
         embed.add_field(
-            name="🟣 **TIER AI PRO — Rp30.000/bulan**",
+            name="🟣 **TIER AI PRO & VIP — Rp30.000/bulan**",
             value=(
                 "• *Semua Fitur Tier Standar +*\n"
+                f"• {get_cmd('rekap-war')} — Export CSV Akumulasi War 1 Bulan\n"
+                f"• {get_cmd('rekap-cwl')} — Export CSV Akumulasi CWL 7 Hari\n"
                 f"• {get_cmd('ai-audit')} — Audit kesehatan clan & evaluasi member\n"
                 f"• {get_cmd('ai-screen')} — Intel profil calon member sebelum di-acc\n"
                 f"• {get_cmd('ai-scout')} — Intel war lawan & target base paling rentan\n"
@@ -89,7 +90,7 @@ class CustomHelp(commands.Cog):
         )
 
         embed.set_footer(
-            text="Niki — CoC Assistant Bot"
+            text="ixiera.id — Operating System Studio"
         )
 
         view = discord.ui.View()

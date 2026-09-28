@@ -18,7 +18,7 @@ class RaceCommands(commands.Cog):
         finally:
             db.close()
 
-    @app_commands.command(name="racewar", description="[STANDAR] Leaderboard stars perang aktif / perang terakhir")
+    @app_commands.command(name="racewar", description="[STANDAR] Leaderboard Offense & Defense perang aktif")
     async def race_war(self, interaction: discord.Interaction):
         await interaction.response.defer()
         
@@ -42,12 +42,22 @@ class RaceCommands(commands.Cog):
             if not war:
                 return await interaction.followup.send("🛡️ Belum ada data War Classic yang tersimpan di database.")
 
+            # Menggunakan CTE untuk menggabungkan data Serangan (Offense) dan Pertahanan (Defense)
             query_rank = text("""
-                SELECT attacker_tag, attacker_name, SUM(stars) as total_stars, COUNT(id) as total_attacks
-                FROM war_attacks
-                WHERE war_id = :war_id
-                GROUP BY attacker_tag, attacker_name
-                ORDER BY total_stars DESC, total_attacks ASC
+                WITH Offense AS (
+                    SELECT attacker_tag as tag, attacker_name as name, SUM(stars) as atk_stars, COUNT(id) as atk_count
+                    FROM war_attacks WHERE war_id = :war_id GROUP BY attacker_tag, attacker_name
+                ),
+                Defense AS (
+                    SELECT defender_tag as tag, MAX(stars) as def_stars_given, MAX(destruction_percentage) as def_dest
+                    FROM war_attacks WHERE war_id = :war_id GROUP BY defender_tag
+                )
+                SELECT o.tag, o.name, o.atk_stars, o.atk_count, 
+                       COALESCE(d.def_stars_given, 0) as def_stars, 
+                       COALESCE(d.def_dest, 0) as def_dest
+                FROM Offense o
+                LEFT JOIN Defense d ON o.tag = d.tag
+                ORDER BY o.atk_stars DESC, def_stars ASC, o.atk_count ASC
             """)
             rankings = db.execute(query_rank, {"war_id": war['id']}).mappings().all()
 
@@ -59,7 +69,7 @@ class RaceCommands(commands.Cog):
 
             embed = discord.Embed(
                 title=f"🏁 Race War Classic vs {war['opponent_name']}",
-                description=f"Status Perang: **{str(war['state']).capitalize()}**",
+                description=f"Status Perang: **{str(war['state']).capitalize()}**\n*(Diurutkan dari Bintang Serangan terbanyak & Pertahanan terkuat)*",
                 color=discord.Color.gold()
             )
 
@@ -67,17 +77,19 @@ class RaceCommands(commands.Cog):
                 embed.description += "\n\n*Belum ada data serangan tercatat.*"
             else:
                 leaderboard_text = ""
-                for i, r in enumerate(rankings, 1):
-                    badge = "🎁 " if r['attacker_tag'] in rewarded_tags else ""
-                    leaderboard_text += f"{i}. {badge}**{r['attacker_name']}** — ⭐ {r['total_stars']} Stars ({r['total_attacks']} Attack)\n"
-                embed.add_field(name="🏆 Klasemen Bintang Member", value=leaderboard_text, inline=False)
+                for i, r in enumerate(rankings[:15], 1): # Limit 15 agar embed tidak terlalu panjang
+                    badge = "🎁 " if r['tag'] in rewarded_tags else ""
+                    # Logika Defense: Jika belum diserang (0), jika tembus (X stars)
+                    def_status = f"🛡️ {r['def_stars']}⭐ ({r['def_dest']}%)" if r['def_stars'] > 0 else "🛡️ Aman"
+                    leaderboard_text += f"{i}. {badge}**{r['name']}**\n└ ⚔️ {r['atk_stars']} Stars ({r['atk_count']} Atk) | {def_status}\n"
+                embed.add_field(name="🏆 Klasemen Performa Member", value=leaderboard_text, inline=False)
 
             embed.set_footer(text="ixiera.id — Operating System Studio | WA: https://wa.me/6285736048626")
             await interaction.followup.send(embed=embed)
         finally:
             db.close()
 
-    @app_commands.command(name="racecwl", description="[STANDAR] Ranking akumulasi stars CWL musim berjalan")
+    @app_commands.command(name="racecwl", description="[STANDAR] Ranking Offense & Defense CWL musim berjalan")
     async def race_cwl(self, interaction: discord.Interaction):
         await interaction.response.defer()
         
@@ -101,12 +113,26 @@ class RaceCommands(commands.Cog):
                 return await interaction.followup.send(f"🛡️ Belum ada data CWL tersimpan untuk musim **{current_month}**.")
 
             query_cwl_rank = text("""
-                SELECT wa.attacker_tag, wa.attacker_name, SUM(wa.stars) as total_stars, COUNT(wa.id) as total_attacks
-                FROM war_attacks wa
-                JOIN wars w ON wa.war_id = w.id
-                WHERE w.cwl_season_id = :season_id
-                GROUP BY wa.attacker_tag, wa.attacker_name
-                ORDER BY total_stars DESC, total_attacks ASC
+                WITH Offense AS (
+                    SELECT wa.attacker_tag as tag, wa.attacker_name as name, SUM(wa.stars) as atk_stars, COUNT(wa.id) as atk_count
+                    FROM war_attacks wa
+                    JOIN wars w ON wa.war_id = w.id
+                    WHERE w.cwl_season_id = :season_id
+                    GROUP BY wa.attacker_tag, wa.attacker_name
+                ),
+                Defense AS (
+                    SELECT wa.defender_tag as tag, SUM(wa.stars) as total_def_stars_given, AVG(wa.destruction_percentage) as avg_def_dest
+                    FROM war_attacks wa
+                    JOIN wars w ON wa.war_id = w.id
+                    WHERE w.cwl_season_id = :season_id
+                    GROUP BY wa.defender_tag
+                )
+                SELECT o.tag, o.name, o.atk_stars, o.atk_count, 
+                       COALESCE(d.total_def_stars_given, 0) as def_stars, 
+                       COALESCE(d.avg_def_dest, 0) as def_dest
+                FROM Offense o
+                LEFT JOIN Defense d ON o.tag = d.tag
+                ORDER BY o.atk_stars DESC, def_stars ASC, o.atk_count ASC
             """)
             rankings = db.execute(query_cwl_rank, {"season_id": cwl.id}).mappings().all()
 
@@ -118,7 +144,7 @@ class RaceCommands(commands.Cog):
 
             embed = discord.Embed(
                 title=f"🏆 CWL Season Race — Musim {current_month}",
-                description="Akumulasi Stars dari seluruh ronde CWL bulan ini:",
+                description="Akumulasi Performa (Serangan & Pertahanan) bulan ini:",
                 color=discord.Color.purple()
             )
 
@@ -126,9 +152,11 @@ class RaceCommands(commands.Cog):
                 embed.description += "\n\n*Belum ada data serangan tercatat.*"
             else:
                 leaderboard_text = ""
-                for i, r in enumerate(rankings, 1):
-                    badge = "🎁 " if r['attacker_tag'] in rewarded_tags else ""
-                    leaderboard_text += f"{i}. {badge}**{r['attacker_name']}** — ⭐ {r['total_stars']} Stars ({r['total_attacks']} Attack)\n"
+                for i, r in enumerate(rankings[:15], 1):
+                    badge = "🎁 " if r['tag'] in rewarded_tags else ""
+                    avg_dest = round(r['def_dest'], 1)
+                    def_status = f"🛡️ -{r['def_stars']}⭐ ({avg_dest}%)" if r['def_stars'] > 0 else "🛡️ Tembok Beton"
+                    leaderboard_text += f"{i}. {badge}**{r['name']}**\n└ ⚔️ {r['atk_stars']} Stars ({r['atk_count']} Atk) | {def_status}\n"
                 embed.add_field(name="📊 Klasemen Akumulasi CWL", value=leaderboard_text, inline=False)
 
             embed.set_footer(text="ixiera.id — Operating System Studio | WA: https://wa.me/6285736048626")

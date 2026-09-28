@@ -18,7 +18,6 @@ class SetupCommands(commands.Cog):
         self.coc = CoCClient()
 
     def _get_owner_id(self):
-        # Ambil dari environment Railway, jika tidak ada fallback ke ID kamu
         return os.getenv("MY_DISCORD_ID", "1398954695137038339").strip()
 
     @app_commands.command(name="setup", description="Mengikat bot ke Clan CoC (Contoh: /setup #2YQUQ...)")
@@ -26,6 +25,12 @@ class SetupCommands(commands.Cog):
     async def setup_clan(self, interaction: discord.Interaction, clan_tag: str, alert_channel: discord.TextChannel = None):
         await interaction.response.defer()
         
+        # --- AUTO-FIX HASHTAG CLAN TAG ---
+        clan_tag = clan_tag.strip().upper()
+        if not clan_tag.startswith("#"):
+            clan_tag = f"#{clan_tag}"
+        # ---------------------------------
+
         clan_data = await self.coc.get_clan_info(clan_tag)
         if not clan_data or 'name' not in clan_data:
             return await interaction.followup.send(f"❌ Tag Clan `{clan_tag}` tidak ditemukan.")
@@ -68,13 +73,12 @@ class SetupCommands(commands.Cog):
             db.close()
 
     @app_commands.command(name="grant-pro", description="[ADMIN ONLY] Aktifkan lisensi berbayar")
-    @app_commands.default_permissions(administrator=True) # Sembunyikan dari user biasa
+    @app_commands.default_permissions(administrator=True)
     async def grant_pro(self, interaction: discord.Interaction, guild_id: str, tier: str, days: int):
-        # Verifikasi Owner dari Environment Variable
         if str(interaction.user.id) != self._get_owner_id():
             return await interaction.response.send_message("❌ Command ini khusus Owner Ixiera!", ephemeral=True)
 
-        await interaction.response.defer(ephemeral=True) # Pesan rahasia (ephemeral)
+        await interaction.response.defer(ephemeral=True)
         db = get_db()
         try:
             config = db.query(ServerConfig).filter(ServerConfig.guild_id == guild_id).first()

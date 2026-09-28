@@ -5,7 +5,6 @@ import dateutil.parser
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from services.coc_client import CoCClient
 from services.db import get_db
-# FIX: Tambahkan import War, WarAttack, dan CWLSeason
 from models import ClanMember, ServerConfig, WarHistory, War, WarAttack, CWLSeason
 
 logger = logging.getLogger('bot.scheduler')
@@ -21,7 +20,7 @@ async def sync_all_clans(bot):
         for config in configs:
             clan_tag = config.clan_tag
             
-            # CEK LISENSI UNTUK FITUR ALERT (Hanya Standar & Pro)
+            # CEK LISENSI UNTUK FITUR ALERT (Hanya Member+ / VIP)
             tier_status = str(config.tier).lower() if config.tier else "free"
             is_premium = tier_status in ["standar", "pro", "ai_pro"]
             alert_channel = None
@@ -29,27 +28,35 @@ async def sync_all_clans(bot):
                 alert_channel = bot.get_channel(int(config.alert_channel_id))
             
             # ==========================================
-            # 1. MEMBER LEAVE ALERT & SINKRONISASI
+            # 1. MEMBER LEAVE & JOIN ALERT SINKRONISASI
             # ==========================================
             clan_data = await coc.get_clan_info(clan_tag)
             
             if clan_data and 'memberList' in clan_data:
-                api_tags = [m['tag'] for m in clan_data['memberList']]
+                api_members = clan_data['memberList']
+                api_tags = [m['tag'] for m in api_members]
                 db_members = db.query(ClanMember).filter(ClanMember.clan_tag == clan_tag).all()
+                db_tags = [m.tag for m in db_members]
                 
+                # Cek Member Keluar
                 for db_m in db_members:
                     if db_m.tag not in api_tags:
                         if alert_channel:
-                            await alert_channel.send(f"🚨 **Member Leave Alert:** `{db_m.name}` (TH {db_m.townhall_level}) baru saja keluar dari clan.")
+                            await alert_channel.send(f"🚨 **Member Keluar:** `{db_m.name}` (TH {db_m.townhall_level}) baru saja meninggalkan clan.")
                         db.delete(db_m)
                 
-                for member in clan_data['memberList']:
+                # Cek Member Masuk & Sinkronisasi Data
+                for member in api_members:
                     db_member = db.query(ClanMember).filter(
                         ClanMember.tag == member['tag'],
                         ClanMember.clan_tag == clan_tag
                     ).first()
                     
                     if not db_member:
+                        # Syarat len(db_tags) > 0 memastikan alert tidak spam saat pertama kali bot disetup
+                        if alert_channel and len(db_tags) > 0:
+                            await alert_channel.send(f"👋 **Member Baru Masuk:** Selamat datang `{member['name']}` (TH {member['townHallLevel']}) di clan!")
+                            
                         db_member = ClanMember(tag=member['tag'], clan_tag=clan_tag)
                         db.add(db_member)
                     
@@ -65,7 +72,7 @@ async def sync_all_clans(bot):
             # ==========================================
             war_data = await coc.get_current_war(clan_tag)
             if war_data:
-                # [A] LOGIKA AUTO WAR ALERT
+                # [A] LOGIKA AUTO WAR ALERT UNTUK SISA WAKTU
                 if war_data.get('state') == 'inWar' and alert_channel:
                     try:
                         end_time_str = war_data.get('endTime')
@@ -85,85 +92,96 @@ async def sync_all_clans(bot):
                                     no_attackers.append(f"{m.get('name')} ({max_attacks - len(attacks)} Attack Sisa)")
                             
                             if no_attackers:
-                                alert_msg = "⚔️ **AUTO WAR ALERT** ⚔️\nWar akan berakhir dalam waktu kurang dari 2 Jam!\n\n**Member belum attack:**\n"
+                                alert_msg = "⚔️ **AUTO WAR ALERT** ⚔️\nWar akan berakhir dalam waktu kurang dari 2 Jam!\n\n**Member belum attack penuh:**\n"
                                 alert_msg += "\n".join([f"• {name}" for name in no_attackers])
                                 await alert_channel.send(alert_msg)
                     except Exception as e:
                         logger.error(f"Gagal parse waktu war untuk alert: {e}")
 
-                # [B] LOGIKA SINKRONISASI BINTANG UNTUK FITUR RACE WAR & CWL
-                if war_data.get('state') in ['inWar', 'warEnded']:
-                    opponent = war_data.get('opponent', {})
-                    clan_info = war_data.get('clan', {})
+                # [B] LOGIKA NOTIFIKASI STATUS WAR (Prep, Battle, Ended) & SINKRONISASI
+                opponent = war_data.get('opponent', {})
+                clan_info = war_data.get('clan', {})
+                
+                if opponent.get('tag'):
+                    cwl_group = await coc.get_cwl_group(clan_tag)
+                    is_cwl = False
+                    cwl_season_id = None
                     
-                    if opponent.get('tag'):
-                        # Cek apakah clan sedang dalam periode CWL bulan ini
-                        cwl_group = await coc.get_cwl_group(clan_tag)
-                        is_cwl = False
-                        cwl_season_id = None
+                    if cwl_group and cwl_group.get('state') != 'notInWar':
+                        is_cwl = True
+                        current_month = datetime.now().strftime('%Y-%m')
                         
-                        if cwl_group and cwl_group.get('state') != 'notInWar':
-                            is_cwl = True
-                            current_month = datetime.now().strftime('%Y-%m')
-                            
-                            # Buat season baru di DB jika bulan berganti
-                            season = db.query(CWLSeason).filter(
-                                CWLSeason.clan_tag == clan_tag, 
-                                CWLSeason.month == current_month
-                            ).first()
-                            
-                            if not season:
-                                season = CWLSeason(month=current_month, clan_tag=clan_tag)
-                                db.add(season)
-                                db.commit()
-                            cwl_season_id = season.id
+                        season = db.query(CWLSeason).filter(
+                            CWLSeason.clan_tag == clan_tag, 
+                            CWLSeason.month == current_month
+                        ).first()
                         
-                        # Sinkronisasi Master War (Tabel `wars`)
-                        db_war = db.query(War).filter(
-                            War.clan_tag == clan_tag,
-                            War.opponent_tag == opponent.get('tag')
-                        ).order_by(War.id.desc()).first()
-                        
-                        if not db_war or (db_war.state == 'warEnded' and war_data.get('state') != 'warEnded'):
-                            db_war = War(
-                                clan_tag=clan_tag,
-                                opponent_tag=opponent.get('tag'),
-                                opponent_name=opponent.get('name'),
-                                team_size=war_data.get('teamSize', 0),
-                                state=war_data.get('state'),
-                                is_cwl=is_cwl,
-                                cwl_season_id=cwl_season_id
-                            )
-                            db.add(db_war)
+                        if not season:
+                            season = CWLSeason(month=current_month, clan_tag=clan_tag)
+                            db.add(season)
                             db.commit()
-                        else:
-                            if db_war.state != war_data.get('state'):
-                                db_war.state = war_data.get('state')
-                                db.commit()
-                        
-                        # Sinkronisasi Detail Serangan (Tabel `war_attacks`)
-                        if clan_info.get('members'):
-                            for m in clan_info['members']:
-                                if 'attacks' in m:
-                                    for idx, atk in enumerate(m['attacks']):
-                                        db_atk = db.query(WarAttack).filter(
-                                            WarAttack.war_id == db_war.id,
-                                            WarAttack.attacker_tag == m.get('tag'),
-                                            WarAttack.order_num == (idx + 1)
-                                        ).first()
-                                        
-                                        if not db_atk:
-                                            new_atk = WarAttack(
-                                                war_id=db_war.id,
-                                                attacker_tag=m.get('tag'),
-                                                attacker_name=m.get('name'),
-                                                defender_tag=atk.get('defenderTag'),
-                                                stars=atk.get('stars', 0),
-                                                destruction_percentage=atk.get('destructionPercentage', 0),
-                                                order_num=(idx + 1)
-                                            )
-                                            db.add(new_atk)
+                        cwl_season_id = season.id
+                    
+                    db_war = db.query(War).filter(
+                        War.clan_tag == clan_tag,
+                        War.opponent_tag == opponent.get('tag')
+                    ).order_by(War.id.desc()).first()
+                    
+                    if not db_war or (db_war.state == 'warEnded' and war_data.get('state') != 'warEnded'):
+                        # PERTANDINGAN BARU TERDETEKSI
+                        db_war = War(
+                            clan_tag=clan_tag,
+                            opponent_tag=opponent.get('tag'),
+                            opponent_name=opponent.get('name'),
+                            team_size=war_data.get('teamSize', 0),
+                            state=war_data.get('state'),
+                            is_cwl=is_cwl,
+                            cwl_season_id=cwl_season_id
+                        )
+                        db.add(db_war)
+                        db.commit()
+
+                        # NOTIFIKASI 1: PREPARATION DAY DIMULAI
+                        if war_data.get('state') == 'preparation' and alert_channel:
+                            await alert_channel.send(f"🔍 **War Matchmaking Sukses!**\nKita akan melawan clan **{opponent.get('name')}**. Fase persiapan telah dimulai. Jangan lupa isi CC!")
+                    else:
+                        if db_war.state != war_data.get('state'):
+                            new_state = war_data.get('state')
+                            db_war.state = new_state
+                            
+                            # NOTIFIKASI 2: BATTLE DAY DIMULAI
+                            if new_state == 'inWar' and alert_channel:
+                                await alert_channel.send(f"⚔️ **Battle Day Dimulai!**\nWar melawan **{opponent.get('name')}** sudah dimulai. Gasken ratakan base musuh!")
+                            
+                            # NOTIFIKASI 3: WAR BERAKHIR
+                            elif new_state == 'warEnded' and alert_channel:
+                                await alert_channel.send(f"🛡️ **War Berakhir!**\nWar melawan **{opponent.get('name')}** telah selesai. Ketik `/warstatus` untuk melihat ringkasan akhir.")
+                                
                             db.commit()
+                    
+                    # Sinkronisasi Detail Serangan (Tabel `war_attacks`)
+                    if clan_info.get('members'):
+                        for m in clan_info['members']:
+                            if 'attacks' in m:
+                                for idx, atk in enumerate(m['attacks']):
+                                    db_atk = db.query(WarAttack).filter(
+                                        WarAttack.war_id == db_war.id,
+                                        WarAttack.attacker_tag == m.get('tag'),
+                                        WarAttack.order_num == (idx + 1)
+                                    ).first()
+                                    
+                                    if not db_atk:
+                                        new_atk = WarAttack(
+                                            war_id=db_war.id,
+                                            attacker_tag=m.get('tag'),
+                                            attacker_name=m.get('name'),
+                                            defender_tag=atk.get('defenderTag'),
+                                            stars=atk.get('stars', 0),
+                                            destruction_percentage=atk.get('destructionPercentage', 0),
+                                            order_num=(idx + 1)
+                                        )
+                                        db.add(new_atk)
+                        db.commit()
 
             # ==========================================
             # 3. WAR HISTORY (Tarik 5 War Terakhir)
