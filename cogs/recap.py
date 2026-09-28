@@ -7,7 +7,6 @@ from services.db import get_db, check_standar_access
 from models import ServerConfig, War, ClanMember
 from sqlalchemy import text
 
-# Import PDF & Graph
 from reportlab.lib.pagesizes import landscape, A4
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image, PageBreak
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -30,7 +29,6 @@ class RecapCommands(commands.Cog):
         return io.BytesIO(output.getvalue().encode('utf-8'))
 
     def _create_graph(self, data, title):
-        # Ambil Top 5 berdasarkan Bintang
         top_data = sorted(data, key=lambda x: x['Total Stars'], reverse=True)[:5]
         names = [str(x['Name'])[:10] for x in top_data]
         stars = [x['Total Stars'] for x in top_data]
@@ -59,17 +57,14 @@ class RecapCommands(commands.Cog):
         
         styles = getSampleStyleSheet()
         title_style = styles['Heading1']
-        title_style.alignment = 1 # Center
-        normal_style = styles['Normal']
+        title_style.alignment = 1
         
-        # Style khusus untuk teks di dalam sel tabel agar bisa di-wrap dan tidak tumpang tindih
         cell_style = ParagraphStyle(name='CellStyle', fontSize=9, leading=11, alignment=1)
+        name_style = ParagraphStyle(name='NameStyle', fontSize=9, leading=11, alignment=0) 
 
         tipe = "CWL Season" if is_cwl else "War Biasa"
         
-        # ==========================================
-        # HALAMAN 1: GRAFIK & RINGKASAN
-        # ==========================================
+        # HALAMAN 1: GRAFIK
         elements.append(Paragraph(f"Laporan Analitik {tipe} - {clan_tag}", title_style))
         elements.append(Spacer(1, 20))
         
@@ -77,9 +72,7 @@ class RecapCommands(commands.Cog):
         elements.append(Image(graph_buf, width=500, height=280))
         elements.append(PageBreak())
 
-        # ==========================================
-        # HALAMAN 2: TABEL OFFENSE (SERANGAN)
-        # ==========================================
+        # HALAMAN 2: TABEL OFFENSE
         elements.append(Paragraph("Tabel 1: Statistik Serangan (Offense)", styles['Heading2']))
         elements.append(Spacer(1, 10))
         
@@ -89,20 +82,21 @@ class RecapCommands(commands.Cog):
         for idx, row in enumerate(data, 1):
             data_offense.append([
                 str(idx),
-                Paragraph(str(row['Name']), cell_style),
+                Paragraph(str(row['Name']), name_style),
                 str(row['Town Hall']),
                 str(row['Number of Attacks']),
-                f"{row['Total Stars']}⭐",
-                f"{row['Avg. Dest']}%",
-                str(row['Three Stars']),
-                str(row['Missed'])
+                f"{int(row['Total Stars'] or 0)}⭐",
+                f"{float(row['Avg. Dest'] or 0):.1f}%",
+                str(row['Three Stars'] or 0),
+                str(row['Missed'] or 0)
             ])
             
-        t_offense = Table(data_offense, colWidths=[35, 120, 40, 40, 50, 60, 50, 50])
+        t_offense = Table(data_offense, colWidths=[35, 140, 40, 40, 50, 60, 50, 50])
         t_offense.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#5865F2")),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('ALIGN', (1, 0), (1, -1), 'LEFT'), 
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
             ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
             ('GRID', (0, 0), (-1, -1), 1, colors.black),
@@ -111,9 +105,7 @@ class RecapCommands(commands.Cog):
         elements.append(t_offense)
         elements.append(PageBreak())
 
-        # ==========================================
         # HALAMAN 3: TABEL DEFENSE & CATATAN
-        # ==========================================
         elements.append(Paragraph("Tabel 2: Pertahanan & Taktik Serangan", styles['Heading2']))
         elements.append(Spacer(1, 10))
         
@@ -122,35 +114,39 @@ class RecapCommands(commands.Cog):
         
         for row in data:
             data_def.append([
-                Paragraph(str(row['Name']), cell_style),
-                f"{row['Total Def Stars']}⭐",
-                f"{row['Avg. Def Dest']}%",
-                str(row['Avg. Target Position [1]']),
-                str(row['Avg. Target Distance [2]']),
-                str(row['Avg. TH Distance [3]'])
+                Paragraph(str(row['Name']), name_style),
+                f"{int(row['Total Def Stars'] or 0)}⭐",
+                f"{float(row['Avg. Def Dest'] or 0):.1f}%",
+                str(round(row['Avg. Target Position [1]'] or 0, 1)),
+                str(round(row['Avg. Target Distance [2]'] or 0, 1)),
+                str(round(row['Avg. TH Distance [3]'] or 0, 1))
             ])
             
-        t_def = Table(data_def, colWidths=[150, 60, 60, 70, 70, 70])
+        t_def = Table(data_def, colWidths=[160, 60, 60, 70, 70, 70])
         t_def.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#ED4245")), # Merah untuk defense/taktik
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#ED4245")),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('ALIGN', (1, 0), (1, -1), 'LEFT'),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
             ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
             ('GRID', (0, 0), (-1, -1), 1, colors.black),
             ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.whitesmoke, colors.HexColor("#EAEAEA")])
         ]))
         elements.append(t_def)
-        elements.append(Spacer(1, 30))
+        elements.append(Spacer(1, 20))
 
-        # CATATAN LENGKAP DI PDF
+        catatan_style = ParagraphStyle(name='Notes', fontSize=9, leading=14)
         catatan_teks = """
-        <b>Catatan Metrik Laporan:</b><br/>
-        <b>[1] Avg. Target Position:</b> Rata-rata posisi map musuh yang diserang oleh player. Contoh: Menyerang map posisi 20, 25, dan 30 menghasilkan rata-rata target posisi 25.<br/>
-        <b>[2] Avg. Target Distance:</b> Selisih rata-rata posisi map penyerang dibandingkan dengan musuh yang diserang. Contoh: Player posisi 5 menyerang musuh di posisi 25, selisihnya adalah -20.<br/>
-        <b>[3] Avg. TH Distance:</b> Selisih rata-rata level Town Hall penyerang dibandingkan dengan musuh. Contoh: TH 14 menyerang TH 15 dan 16, menghasilkan rata-rata selisih 1.5.
+        <b>Panduan Analitik Metrik Kompetitif (Esports Grade):</b><br/><br/>
+        <b>[1] Avg. Target Position (ATP):</b> Menunjukkan area map yang sering diserang oleh player. Semakin kecil angkanya (misal: 1-5), berarti player ditugaskan menyerang base inti papan atas musuh.<br/>
+        <b>[2] Target Distance Index (TDI):</b> Kedisiplinan serangan berdasarkan urutan map. Angka negatif (misal: -5) berarti player menyerang jatuh ke bawah map (dip). Angka positif (misal: +2) berarti player mampu menyerang base yang lebih tinggi dari posisinya (reach). Angka 0 menunjukkan serangan cermin akurat (mirror).<br/>
+        <b>[3] TH Differential (THD):</b> Menilai tingkat kesulitan serangan. Angka -1.0 berarti player selalu menyerang Town Hall 1 level di bawahnya (bully). Angka positif menandakan player mampu meratakan TH yang lebih tinggi dari levelnya sendiri.<br/>
+        <b>[4] True Stars / Net Stars (TNS):</b> Bintang murni yang disumbangkan ke total skor klan. Menyerang base yang sudah 2-bintang dan mendapat 3-bintang hanya bernilai 1 True Star (Clean-up point).<br/>
+        <b>[5] Fresh Hit Rate (FHR):</b> Rasio keberhasilan menyerang base yang belum pernah disentuh oleh siapapun sebelumnya. Sangat krusial untuk pembuka strategi map klan.<br/>
+        <b>[6] Defense Hold Rate (DHR):</b> Kemampuan tata letak (layout) base bertahan dari bintang 3. Base yang mampu menahan 3 serangan sebelum runtuh memiliki nilai DHR yang sangat tinggi.
         """
-        elements.append(Paragraph(catatan_teks, normal_style))
+        elements.append(Paragraph(catatan_teks, catatan_style))
 
         doc.build(elements)
         buffer.seek(0)
@@ -244,30 +240,29 @@ class RecapCommands(commands.Cog):
                     'Town Hall': th_level,
                     'Wars Participated': row['wars_participated'],
                     'Number of Attacks': row['total_attacks'],
-                    'Total Stars': row['total_stars'],
-                    'Avg. Stars': round(row['avg_stars'], 2) if row['avg_stars'] else 0,
-                    'True Stars': row['total_stars'], 
-                    'Avg. True Stars': round(row['avg_stars'], 2) if row['avg_stars'] else 0,
-                    'Total Dest': row['total_dest'],
-                    'Avg. Dest': round(row['avg_dest'], 2) if row['avg_dest'] else 0,
-                    'Three Stars': row['three_stars'],
-                    'Two Stars': row['two_stars'],
-                    'One Stars': row['one_stars'],
-                    'Zero Stars': row['zero_stars'],
+                    'Total Stars': int(row['total_stars'] or 0),
+                    'Avg. Stars': round(row['avg_stars'] or 0, 2),
+                    'True Stars': int(row['total_stars'] or 0), 
+                    'Avg. True Stars': round(row['avg_stars'] or 0, 2),
+                    'Total Dest': int(row['total_dest'] or 0),
+                    'Avg. Dest': round(row['avg_dest'] or 0, 2),
+                    'Three Stars': int(row['three_stars'] or 0),
+                    'Two Stars': int(row['two_stars'] or 0),
+                    'One Stars': int(row['one_stars'] or 0),
+                    'Zero Stars': int(row['zero_stars'] or 0),
                     'Missed': missed,
-                    'Total Defenses': row['total_defenses'],
-                    'Total Def Stars': row['total_def_stars'],
-                    'Avg. Def Stars': round(row['avg_def_stars'], 2) if row['avg_def_stars'] else 0,
-                    'Total Def Dest': row['total_def_dest'],
-                    'Avg. Def Dest': round(row['avg_def_dest'], 2) if row['avg_def_dest'] else 0,
-                    'Avg. Target Position [1]': round(row['avg_target_position'], 2) if row['avg_target_position'] else 0,
-                    'Avg. Target Distance [2]': round(row['avg_target_distance'], 2) if row['avg_target_distance'] else 0,
-                    'Avg. TH Distance [3]': round(row['avg_th_distance'], 2) if row['avg_th_distance'] else 0
+                    'Total Defenses': int(row['total_defenses'] or 0),
+                    'Total Def Stars': int(row['total_def_stars'] or 0),
+                    'Avg. Def Stars': round(row['avg_def_stars'] or 0, 2),
+                    'Total Def Dest': round(row['total_def_dest'] or 0, 2),
+                    'Avg. Def Dest': round(row['avg_def_dest'] or 0, 2),
+                    'Avg. Target Position [1]': round(row['avg_target_position'] or 0, 2),
+                    'Avg. Target Distance [2]': round(row['avg_target_distance'] or 0, 2),
+                    'Avg. TH Distance [3]': round(row['avg_th_distance'] or 0, 2)
                 })
 
             tipe_file = "CWL" if is_cwl else "War"
             
-            # GENERATE CSV & PDF BERBARENGAN
             csv_buffer = self._generate_csv(csv_data)
             pdf_buffer = self._generate_pdf(csv_data, clan_tag.replace('#', ''), is_cwl)
             

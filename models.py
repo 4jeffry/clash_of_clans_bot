@@ -4,23 +4,20 @@ import datetime
 
 Base = declarative_base()
 
-# TABEL: Menyimpan konfigurasi tiap server Discord & Sistem Lisensi
 class ServerConfig(Base):
     __tablename__ = 'server_configs'
-    
-    guild_id = Column(String, primary_key=True) # ID Server Discord
-    clan_tag = Column(String, nullable=False)   # Tag Clan CoC yang di-bind
-    setup_by = Column(String)                   # User ID Leader yang nge-setup
-    tier = Column(String, default="free")       # 'free', 'standar', 'ai_pro'
-    alert_channel_id = Column(String, nullable=True) # Channel ID untuk Auto Alert
-    expired_at = Column(DateTime, nullable=True)# Tanggal kedaluwarsa lisensi
+    guild_id = Column(String, primary_key=True)
+    clan_tag = Column(String, nullable=False)
+    setup_by = Column(String)
+    tier = Column(String, default="free")
+    alert_channel_id = Column(String, nullable=True)
+    expired_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 class ClanMember(Base):
     __tablename__ = 'members'
-    
     tag = Column(String, primary_key=True)
-    clan_tag = Column(String, nullable=False)   # Milik clan mana
+    clan_tag = Column(String, nullable=False)
     name = Column(String, nullable=False)
     role = Column(String)
     townhall_level = Column(Integer)
@@ -30,9 +27,8 @@ class ClanMember(Base):
 
 class WarHistory(Base):
     __tablename__ = 'war_history'
-    
     id = Column(Integer, primary_key=True, autoincrement=True)
-    clan_tag = Column(String, nullable=False)   # Milik clan mana
+    clan_tag = Column(String, nullable=False)
     opponent_name = Column(String)
     opponent_tag = Column(String)
     result = Column(String)
@@ -40,10 +36,8 @@ class WarHistory(Base):
     destruction_percentage = Column(Integer)
     end_time = Column(DateTime, default=datetime.datetime.utcnow)
 
-# TABEL BARU: Tracking Master War (Classic & CWL)
 class War(Base):
     __tablename__ = 'wars'
-
     id = Column(Integer, primary_key=True, autoincrement=True)
     clan_tag = Column(String(20), nullable=False)
     opponent_tag = Column(String(20))
@@ -54,10 +48,8 @@ class War(Base):
     cwl_season_id = Column(Integer, ForeignKey('cwl_seasons.id', ondelete='SET NULL'), nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
-# TABEL BARU: Detail Serangan Member (Stars & Destruction)
 class WarAttack(Base):
     __tablename__ = 'war_attacks'
-
     id = Column(Integer, primary_key=True, autoincrement=True)
     war_id = Column(Integer, ForeignKey('wars.id', ondelete='CASCADE'))
     attacker_tag = Column(String(20), nullable=False)
@@ -66,23 +58,28 @@ class WarAttack(Base):
     stars = Column(Integer, default=0)
     destruction_percentage = Column(Integer, default=0)
     order_num = Column(Integer, default=1)
+    
+    # Kolom Analitik Kompetitif (Esports Grade)
+    attacker_th = Column(Integer, default=0)
+    defender_th = Column(Integer, default=0)
+    attacker_map_position = Column(Integer, default=0)
+    defender_map_position = Column(Integer, default=0)
+    is_fresh_attack = Column(Boolean, default=True)
+    net_stars = Column(Integer, default=0)
+    
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
-# TABEL BARU: Pengelompokan CWL Musiman
 class CWLSeason(Base):
     __tablename__ = 'cwl_seasons'
-
     id = Column(Integer, primary_key=True, autoincrement=True)
-    month = Column(String(7), nullable=False) # '2026-09'
+    month = Column(String(7), nullable=False)
     clan_tag = Column(String(20), nullable=False)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
-# TABEL BARU: Penanda Klaim Reward
 class RaceReward(Base):
     __tablename__ = 'race_rewards'
-
     id = Column(Integer, primary_key=True, autoincrement=True)
-    scope_type = Column(String(10), nullable=False) # 'war' atau 'cwl'
+    scope_type = Column(String(10), nullable=False)
     scope_id = Column(Integer, nullable=False)
     player_tag = Column(String(20), nullable=False)
     reward_note = Column(Text, nullable=True)

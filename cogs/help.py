@@ -52,8 +52,8 @@ class CustomHelp(commands.Cog):
             name="🔵 **MEMBER+ SUPPORTER (Donasi Server Rp10k/bln)**",
             value=(
                 "*(Terima kasih telah membantu biaya server kami!)*\n"
-                f"• {get_cmd('rekap-war')} — Export CSV Akumulasi War 1 Bulan\n"
-                f"• {get_cmd('rekap-cwl')} — Export CSV Akumulasi CWL 7 Hari\n"
+                f"• {get_cmd('rekap-war')} — Unduh laporan lengkap performa & taktik War 1 Bulan\n"
+                f"• {get_cmd('rekap-cwl')} — Unduh laporan komprehensif performa CWL 7 Hari\n"
                 f"• {get_cmd('racewar')} — Klasemen Offense & Defense perang aktif\n"
                 f"• {get_cmd('racecwl')} — Klasemen Offense & Defense CWL berjalan\n"
                 f"• {get_cmd('givereward')} — Berikan reward ke member\n"
@@ -69,7 +69,7 @@ class CustomHelp(commands.Cog):
         embed.add_field(
             name="🟣 **VIP SUPPORTER (Akses AI - Donasi Rp30k/bln)**",
             value=(
-                "*(Dukungan ekstra untuk menutupi biaya API AI Gemini)*\n"
+                "*(Dukungan ekstra untuk menutupi biaya AI)*\n"
                 f"• {get_cmd('ai-audit')} — Audit kesehatan clan & evaluasi member\n"
                 f"• {get_cmd('ai-screen')} — Intel profil calon member sebelum di-acc\n"
                 f"• {get_cmd('ai-scout')} — Intel war lawan & target base paling rentan\n"
