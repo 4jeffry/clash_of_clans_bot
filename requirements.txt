@@ -7,4 +7,4 @@ python-dotenv==1.0.1
 google-genai
 psycopg[binary]>=3.2.0
 python-dateutil
-pip install reportlab
+reportlab
