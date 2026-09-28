@@ -7,11 +7,12 @@ from services.db import get_db, check_standar_access
 from models import ServerConfig, War, ClanMember
 from sqlalchemy import text
 
-# Import untuk PDF Generation
+# Import PDF & Graph
 from reportlab.lib.pagesizes import landscape, A4
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
-from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image, PageBreak
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
+import matplotlib.pyplot as plt
 
 class RecapCommands(commands.Cog):
     def __init__(self, bot):
@@ -21,14 +22,35 @@ class RecapCommands(commands.Cog):
         output = io.StringIO()
         if not rows_data:
             return None
-            
         fieldnames = list(rows_data[0].keys())
         writer = csv.DictWriter(output, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows_data)
-        
         output.seek(0)
         return io.BytesIO(output.getvalue().encode('utf-8'))
+
+    def _create_graph(self, data, title):
+        # Ambil Top 5 berdasarkan Bintang
+        top_data = sorted(data, key=lambda x: x['Total Stars'], reverse=True)[:5]
+        names = [str(x['Name'])[:10] for x in top_data]
+        stars = [x['Total Stars'] for x in top_data]
+
+        plt.figure(figsize=(7, 4))
+        plt.bar(names, stars, color='#5865F2', edgecolor='black')
+        plt.title(f'Top 5 Member - {title}', fontsize=14, fontweight='bold')
+        plt.ylabel('Total Bintang', fontsize=12)
+        plt.xlabel('Nama Member', fontsize=12)
+        plt.ylim(0, max(stars) + 3 if stars else 10)
+        
+        for i, v in enumerate(stars):
+            plt.text(i, v + 0.5, str(v), ha='center', fontweight='bold')
+
+        plt.tight_layout()
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', dpi=150)
+        buf.seek(0)
+        plt.close()
+        return buf
 
     def _generate_pdf(self, data, clan_tag, is_cwl):
         buffer = io.BytesIO()
@@ -36,48 +58,100 @@ class RecapCommands(commands.Cog):
         elements = []
         
         styles = getSampleStyleSheet()
+        title_style = styles['Heading1']
+        title_style.alignment = 1 # Center
+        normal_style = styles['Normal']
+        
+        # Style khusus untuk teks di dalam sel tabel agar bisa di-wrap dan tidak tumpang tindih
+        cell_style = ParagraphStyle(name='CellStyle', fontSize=9, leading=11, alignment=1)
+
         tipe = "CWL Season" if is_cwl else "War Biasa"
-        title_text = f"Laporan Performa {tipe} - {clan_tag}"
         
-        elements.append(Paragraph(title_text, styles['Title']))
-        elements.append(Spacer(1, 12))
+        # ==========================================
+        # HALAMAN 1: GRAFIK & RINGKASAN
+        # ==========================================
+        elements.append(Paragraph(f"Laporan Analitik {tipe} - {clan_tag}", title_style))
+        elements.append(Spacer(1, 20))
         
-        # Kolom Ringkasan Eksekutif untuk PDF agar muat di kertas A4
-        headers = ['Rank', 'Nama Member', 'TH', 'Atk', 'Stars', 'Avg Dest', 'Missed', 'Def Stars', 'Def Dest']
-        table_data = [headers]
+        graph_buf = self._create_graph(data, tipe)
+        elements.append(Image(graph_buf, width=500, height=280))
+        elements.append(PageBreak())
+
+        # ==========================================
+        # HALAMAN 2: TABEL OFFENSE (SERANGAN)
+        # ==========================================
+        elements.append(Paragraph("Tabel 1: Statistik Serangan (Offense)", styles['Heading2']))
+        elements.append(Spacer(1, 10))
+        
+        head_offense = ['Rank', 'Nama Member', 'TH', 'Atk', 'Stars', 'Avg Dest', '3-Stars', 'Missed']
+        data_offense = [[Paragraph(h, cell_style) for h in head_offense]]
         
         for idx, row in enumerate(data, 1):
-            nama = str(row['Name'])[:15] + ".." if len(str(row['Name'])) > 15 else str(row['Name'])
-            table_data.append([
+            data_offense.append([
                 str(idx),
-                nama,
+                Paragraph(str(row['Name']), cell_style),
                 str(row['Town Hall']),
                 str(row['Number of Attacks']),
                 f"{row['Total Stars']}⭐",
                 f"{row['Avg. Dest']}%",
-                str(row['Missed']),
-                f"{row['Total Def Stars']}⭐",
-                f"{row['Avg. Def Dest']}%"
+                str(row['Three Stars']),
+                str(row['Missed'])
             ])
             
-        # Styling Tabel PDF biar elegan
-        t = Table(table_data)
-        t.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#5865F2")), # Warna Header Discord
+        t_offense = Table(data_offense, colWidths=[35, 120, 40, 40, 50, 60, 50, 50])
+        t_offense.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#5865F2")),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
             ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, 0), 10),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
-            ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor("#F6F6F7")),
-            ('TEXTCOLOR', (0, 1), (-1, -1), colors.black),
-            ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-            ('FONTSIZE', (0, 1), (-1, -1), 9),
             ('GRID', (0, 0), (-1, -1), 1, colors.black),
-            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.whitesmoke, colors.HexColor("#EAEAEA")]) # Efek Belang-belang
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.whitesmoke, colors.HexColor("#EAEAEA")])
         ]))
+        elements.append(t_offense)
+        elements.append(PageBreak())
+
+        # ==========================================
+        # HALAMAN 3: TABEL DEFENSE & CATATAN
+        # ==========================================
+        elements.append(Paragraph("Tabel 2: Pertahanan & Taktik Serangan", styles['Heading2']))
+        elements.append(Spacer(1, 10))
         
-        elements.append(t)
+        head_def = ['Nama Member', 'Def Stars', 'Def Dest', 'Avg Tgt Pos', 'Tgt Distance', 'TH Distance']
+        data_def = [[Paragraph(h, cell_style) for h in head_def]]
+        
+        for row in data:
+            data_def.append([
+                Paragraph(str(row['Name']), cell_style),
+                f"{row['Total Def Stars']}⭐",
+                f"{row['Avg. Def Dest']}%",
+                str(row['Avg. Target Position [1]']),
+                str(row['Avg. Target Distance [2]']),
+                str(row['Avg. TH Distance [3]'])
+            ])
+            
+        t_def = Table(data_def, colWidths=[150, 60, 60, 70, 70, 70])
+        t_def.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#ED4245")), # Merah untuk defense/taktik
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.whitesmoke, colors.HexColor("#EAEAEA")])
+        ]))
+        elements.append(t_def)
+        elements.append(Spacer(1, 30))
+
+        # CATATAN LENGKAP DI PDF
+        catatan_teks = """
+        <b>Catatan Metrik Laporan:</b><br/>
+        <b>[1] Avg. Target Position:</b> Rata-rata posisi map musuh yang diserang oleh player. Contoh: Menyerang map posisi 20, 25, dan 30 menghasilkan rata-rata target posisi 25.<br/>
+        <b>[2] Avg. Target Distance:</b> Selisih rata-rata posisi map penyerang dibandingkan dengan musuh yang diserang. Contoh: Player posisi 5 menyerang musuh di posisi 25, selisihnya adalah -20.<br/>
+        <b>[3] Avg. TH Distance:</b> Selisih rata-rata level Town Hall penyerang dibandingkan dengan musuh. Contoh: TH 14 menyerang TH 15 dan 16, menghasilkan rata-rata selisih 1.5.
+        """
+        elements.append(Paragraph(catatan_teks, normal_style))
+
         doc.build(elements)
         buffer.seek(0)
         return buffer
@@ -101,7 +175,6 @@ class RecapCommands(commands.Cog):
 
             war_ids = [str(w.id) for w in wars]
             war_ids_str = ",".join(war_ids)
-
             max_atk = 1 if is_cwl else 2
 
             query = text(f"""
@@ -203,26 +276,11 @@ class RecapCommands(commands.Cog):
 
             embed = discord.Embed(
                 title=f"📊 Laporan Akumulasi {tipe_file} — {clan_tag}",
-                description=f"Total Perang Tercatat: **{len(wars)} War**\nFile **PDF** (Ringkasan) dan **CSV** (Data Full 23 Kolom) telah dilampirkan.",
+                description=f"Total Perang Tercatat: **{len(wars)} War**\nFile **PDF** (Analitik & Grafik) dan **CSV** (Data Full) telah dilampirkan.",
                 color=discord.Color.purple() if is_cwl else discord.Color.blue()
             )
             
-            top_3 = ""
-            for i, item in enumerate(csv_data[:3], 1):
-                top_3 += f"**#{i} {item['Name']}**\n└ ⚔️ {item['Total Stars']}⭐ ({item['Avg. Dest']}%) | 🛡️ Def: {item['Total Def Stars']}⭐\n"
-            
-            embed.add_field(name="🥇 Top 3 Member", value=top_3 or "Kosong", inline=False)
-            
-            catatan = (
-                "**Keterangan Metrik Tambahan (Lihat di CSV):**\n"
-                "`[1]` **Avg. Target Position:** Rata-rata posisi map musuh yang diserang.\n"
-                "`[2]` **Avg. Target Distance:** Selisih posisi map penyerang vs musuh.\n"
-                "`[3]` **Avg. TH Distance:** Selisih level TH penyerang vs musuh."
-            )
-            embed.add_field(name="📝 Catatan Laporan", value=catatan, inline=False)
             embed.set_footer(text="Niki CoC Bot — Supporter Analytics System")
-
-            # Kirim Embed beserta DUA FILE sekaligus!
             await interaction.followup.send(embed=embed, files=[file_pdf, file_csv])
 
         except Exception as e:
