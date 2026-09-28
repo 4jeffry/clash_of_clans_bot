@@ -6,7 +6,7 @@ class CustomHelp(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="help", description="Menampilkan panduan penggunaan dan daftar tier paket bot")
+    @app_commands.command(name="help", description="Menampilkan panduan penggunaan dan cara mendukung bot")
     async def help_command(self, interaction: discord.Interaction):
         await interaction.response.defer()
 
@@ -23,18 +23,18 @@ class CustomHelp(commands.Cog):
             return f"`/{name}`"
 
         embed = discord.Embed(
-            title="⚔️ Panduan & Tier Paket Niki CoC Bot",
+            title="⚔️ Panduan & Dukungan Niki CoC Bot",
             description=(
                 "Selamat datang di **Niki CoC Bot**!\n"
-                "Gunakan Slash Command di bawah ini sesuai dengan tier lisensi server kamu.\n\n"
-                "💬 **Upgrade Lisensi / Support:** [Chat WhatsApp Admin](https://wa.me/6285736048626)\n"
+                "Bot komunitas independen untuk manajemen Clan Clash of Clans.\n\n"
+                "💬 **Bantu Donasi / Support:** [Chat WhatsApp Admin](https://wa.me/6285736048626)\n"
                 "───────────────"
             ),
             color=discord.Color.from_rgb(88, 101, 242)
         )
 
         embed.add_field(
-            name="🟢 **TIER FREE (Fitur Dasar Gratis)**",
+            name="🟢 **AKSES PUBLIK (Gratis)**",
             value=(
                 f"• {get_cmd('donations')} — Top 5 donatur tertinggi clan\n"
                 f"• {get_cmd('inactive')} — Cek member pasif / donasi terendah\n"
@@ -49,27 +49,27 @@ class CustomHelp(commands.Cog):
         )
 
         embed.add_field(
-            name="🔵 **TIER STANDAR — Rp10.000/bulan**",
+            name="🔵 **MEMBER+ SUPPORTER (Donasi Server Rp10k/bln)**",
             value=(
-                "• *Semua Fitur Tier Free +*\n"
-                f"• {get_cmd('racewar')} — Klasemen stars perang aktif (Offense & Defense)\n"
-                f"• {get_cmd('racecwl')} — Klasemen akumulasi stars CWL (Offense & Defense)\n"
+                "*(Terima kasih telah membantu biaya server kami!)*\n"
+                f"• {get_cmd('rekap-war')} — Export CSV Akumulasi War 1 Bulan\n"
+                f"• {get_cmd('rekap-cwl')} — Export CSV Akumulasi CWL 7 Hari\n"
+                f"• {get_cmd('racewar')} — Klasemen Offense & Defense perang aktif\n"
+                f"• {get_cmd('racecwl')} — Klasemen Offense & Defense CWL berjalan\n"
                 f"• {get_cmd('givereward')} — Berikan reward ke member\n"
                 f"• {get_cmd('rewardhistory')} — Histori pembagian reward\n"
                 f"• {get_cmd('memberstats')} — Detail statistik 1 member\n"
                 f"• {get_cmd('compare')} — Perbandingan statistik 2 member\n"
                 f"• {get_cmd('leaderboard')}, {get_cmd('wartime')}, {get_cmd('thcomposition')}\n"
-                "• 🔔 **Auto Alert** — Notifikasi member keluar & sisa waktu war"
+                "• 🔔 **Auto Alert** — Notifikasi member keluar/masuk & sisa waktu war"
             ),
             inline=False
         )
 
         embed.add_field(
-            name="🟣 **TIER AI PRO & VIP — Rp30.000/bulan**",
+            name="🟣 **VIP SUPPORTER (Akses AI - Donasi Rp30k/bln)**",
             value=(
-                "• *Semua Fitur Tier Standar +*\n"
-                f"• {get_cmd('rekap-war')} — Export CSV Akumulasi War 1 Bulan\n"
-                f"• {get_cmd('rekap-cwl')} — Export CSV Akumulasi CWL 7 Hari\n"
+                "*(Dukungan ekstra untuk menutupi biaya API AI Gemini)*\n"
                 f"• {get_cmd('ai-audit')} — Audit kesehatan clan & evaluasi member\n"
                 f"• {get_cmd('ai-screen')} — Intel profil calon member sebelum di-acc\n"
                 f"• {get_cmd('ai-scout')} — Intel war lawan & target base paling rentan\n"
@@ -83,14 +83,14 @@ class CustomHelp(commands.Cog):
             name="⚙️ **Sistem & Moderasi**",
             value=(
                 f"• {get_cmd('setup')} `[clan_tag] [channel_notif]` — Hubungkan bot ke clan\n"
-                f"• {get_cmd('usage')} — Cek status lisensi & masa aktif tier\n"
+                f"• {get_cmd('usage')} — Cek status donatur & masa aktif server\n"
                 f"• {get_cmd('clear')} `[amount]` — [ADMIN] Hapus chat secara masal"
             ),
             inline=False
         )
 
         embed.set_footer(
-            text="ixiera.id — Operating System Studio"
+            text="This material is unofficial and is not endorsed by Supercell.\nFor more information see Supercell's Fan Content Policy."
         )
 
         view = discord.ui.View()
