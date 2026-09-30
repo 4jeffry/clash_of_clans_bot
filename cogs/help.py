@@ -52,16 +52,16 @@ class CustomHelp(commands.Cog):
             name="🔵 **MEMBER+ SUPPORTER (Donasi Server Rp10k/bln)**",
             value=(
                 "*(Terima kasih telah membantu biaya server kami!)*\n"
-                f"• {get_cmd('rekap-war')} — Unduh laporan lengkap performa & taktik War 1 Bulan\n"
-                f"• {get_cmd('rekap-cwl')} — Unduh laporan komprehensif performa CWL 7 Hari\n"
+                f"• {get_cmd('rekap-war')} — Unduh laporan komprehensif taktik War\n"
+                f"• {get_cmd('rekap-cwl')} — Unduh laporan komprehensif performa CWL\n"
                 f"• {get_cmd('racewar')} — Klasemen Offense & Defense perang aktif\n"
                 f"• {get_cmd('racecwl')} — Klasemen Offense & Defense CWL berjalan\n"
-                f"• {get_cmd('givereward')} — Berikan reward ke member\n"
-                f"• {get_cmd('rewardhistory')} — Histori pembagian reward\n"
+                f"• {get_cmd('givereward')} — Catat apresiasi (Otomatis Rekap/Manual)\n"
+                f"• {get_cmd('rewardhistory')} — Histori pembagian reward member\n"
                 f"• {get_cmd('memberstats')} — Detail statistik 1 member\n"
                 f"• {get_cmd('compare')} — Perbandingan statistik 2 member\n"
                 f"• {get_cmd('leaderboard')}, {get_cmd('wartime')}, {get_cmd('thcomposition')}\n"
-                "• 🔔 **Auto Alert** — Notifikasi member keluar/masuk & sisa waktu war"
+                "• 🔔 **Auto Alert** — Notifikasi member & sisa waktu war"
             ),
             inline=False
         )
@@ -90,7 +90,7 @@ class CustomHelp(commands.Cog):
         )
 
         embed.set_footer(
-            text="This material is unofficial and is not endorsed by Supercell.\nFor more information see Supercell's Fan Content Policy."
+            text="ixiera.id — Operating System Studio | WA: https://wa.me/6285736048626"
         )
 
         view = discord.ui.View()
