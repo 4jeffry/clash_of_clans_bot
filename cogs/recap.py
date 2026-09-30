@@ -29,14 +29,15 @@ class RecapCommands(commands.Cog):
         return io.BytesIO(output.getvalue().encode('utf-8'))
 
     def _create_graph(self, data, title):
-        top_data = sorted(data, key=lambda x: x['Total Stars'], reverse=True)[:5]
+        # Grafik sekarang difokuskan pada TRUE STARS (Bintang Murni Esports)
+        top_data = sorted(data, key=lambda x: x['True Stars'], reverse=True)[:5]
         names = [str(x['Name'])[:10] for x in top_data]
-        stars = [x['Total Stars'] for x in top_data]
+        stars = [x['True Stars'] for x in top_data]
 
         plt.figure(figsize=(7, 4))
         plt.bar(names, stars, color='#5865F2', edgecolor='black')
-        plt.title(f'Top 5 Member - {title}', fontsize=14, fontweight='bold')
-        plt.ylabel('Total Bintang', fontsize=12)
+        plt.title(f'Top 5 Member (True Stars) - {title}', fontsize=14, fontweight='bold')
+        plt.ylabel('True Stars', fontsize=12)
         plt.xlabel('Nama Member', fontsize=12)
         plt.ylim(0, max(stars) + 3 if stars else 10)
         
@@ -65,7 +66,7 @@ class RecapCommands(commands.Cog):
         tipe = "CWL Season" if is_cwl else "War Biasa"
         
         # HALAMAN 1: GRAFIK
-        elements.append(Paragraph(f"Laporan Analitik {tipe} - {clan_tag}", title_style))
+        elements.append(Paragraph(f"Laporan Analitik Kompetitif {tipe} — {clan_tag}", title_style))
         elements.append(Spacer(1, 20))
         
         graph_buf = self._create_graph(data, tipe)
@@ -73,10 +74,10 @@ class RecapCommands(commands.Cog):
         elements.append(PageBreak())
 
         # HALAMAN 2: TABEL OFFENSE
-        elements.append(Paragraph("Tabel 1: Statistik Serangan (Offense)", styles['Heading2']))
+        elements.append(Paragraph("Tabel 1: Statistik Serangan (True Stars & Destruksi)", styles['Heading2']))
         elements.append(Spacer(1, 10))
         
-        head_offense = ['Rank', 'Nama Member', 'TH', 'Atk', 'Stars', 'Avg Dest', '3-Stars', 'Missed']
+        head_offense = ['Rank', 'Nama Member', 'TH', 'Atk', 'True Stars', 'Avg Dest', '3-Stars', 'Missed']
         data_offense = [[Paragraph(h, cell_style) for h in head_offense]]
         
         for idx, row in enumerate(data, 1):
@@ -85,13 +86,13 @@ class RecapCommands(commands.Cog):
                 Paragraph(str(row['Name']), name_style),
                 str(row['Town Hall']),
                 str(row['Number of Attacks']),
-                f"{int(row['Total Stars'] or 0)}⭐",
+                f"{int(row['True Stars'] or 0)}⭐",
                 f"{float(row['Avg. Dest'] or 0):.1f}%",
                 str(row['Three Stars'] or 0),
                 str(row['Missed'] or 0)
             ])
             
-        t_offense = Table(data_offense, colWidths=[35, 140, 40, 40, 50, 60, 50, 50])
+        t_offense = Table(data_offense, colWidths=[35, 140, 40, 40, 60, 60, 50, 50])
         t_offense.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#5865F2")),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
@@ -106,7 +107,7 @@ class RecapCommands(commands.Cog):
         elements.append(PageBreak())
 
         # HALAMAN 3: TABEL DEFENSE & CATATAN
-        elements.append(Paragraph("Tabel 2: Pertahanan & Taktik Serangan", styles['Heading2']))
+        elements.append(Paragraph("Tabel 2: Pertahanan & Indeks Taktis Perang", styles['Heading2']))
         elements.append(Spacer(1, 10))
         
         head_def = ['Nama Member', 'Def Stars', 'Def Dest', 'Avg Tgt Pos', 'Tgt Distance', 'TH Distance']
@@ -134,11 +135,11 @@ class RecapCommands(commands.Cog):
             ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.whitesmoke, colors.HexColor("#EAEAEA")])
         ]))
         elements.append(t_def)
-        elements.append(Spacer(1, 20))
+        elements.append(Spacer(1, 15))
 
-        catatan_style = ParagraphStyle(name='Notes', fontSize=9, leading=14)
+        catatan_style = ParagraphStyle(name='Notes', fontSize=8.5, leading=12)
         catatan_teks = """
-        <b>Panduan Analitik Metrik Kompetitif (Esports Grade):</b><br/><br/>
+        <b>Panduan Analitik Metrik Kompetitif (Esports Grade):</b><br/>
         <b>[1] Avg. Target Position (ATP):</b> Menunjukkan area map yang sering diserang oleh player. Semakin kecil angkanya (misal: 1-5), berarti player ditugaskan menyerang base inti papan atas musuh.<br/>
         <b>[2] Target Distance Index (TDI):</b> Kedisiplinan serangan berdasarkan urutan map. Angka negatif (misal: -5) berarti player menyerang jatuh ke bawah map (dip). Angka positif (misal: +2) berarti player mampu menyerang base yang lebih tinggi dari posisinya (reach). Angka 0 menunjukkan serangan cermin akurat (mirror).<br/>
         <b>[3] TH Differential (THD):</b> Menilai tingkat kesulitan serangan. Angka -1.0 berarti player selalu menyerang Town Hall 1 level di bawahnya (bully). Angka positif menandakan player mampu meratakan TH yang lebih tinggi dari levelnya sendiri.<br/>
@@ -171,17 +172,28 @@ class RecapCommands(commands.Cog):
 
             war_ids = [str(w.id) for w in wars]
             war_ids_str = ",".join(war_ids)
-            max_atk = 1 if is_cwl else 2
 
+            # QUERY FASE 2: FULL METRICS (PARTICIPANTS, OFFENSE, DEFENSE, NET STARS)
             query = text(f"""
-                WITH Offense AS (
+                WITH Participants AS (
                     SELECT 
-                        attacker_tag as tag, 
-                        MAX(attacker_name) as name,
+                        player_tag as tag,
+                        MAX(player_name) as name,
                         COUNT(DISTINCT war_id) as wars_participated,
+                        SUM(attacks_allowed) as total_allowed,
+                        SUM(attacks_used) as total_used
+                    FROM war_participants 
+                    WHERE war_id IN ({war_ids_str})
+                    GROUP BY player_tag
+                ),
+                Offense AS (
+                    SELECT 
+                        attacker_tag as tag,
+                        MAX(attacker_name) as name,
                         COUNT(id) as total_attacks,
                         SUM(stars) as total_stars,
                         AVG(stars) as avg_stars,
+                        SUM(net_stars) as true_stars,
                         SUM(destruction_percentage) as total_dest,
                         AVG(destruction_percentage) as avg_dest,
                         SUM(CASE WHEN stars = 3 THEN 1 ELSE 0 END) as three_stars,
@@ -206,20 +218,42 @@ class RecapCommands(commands.Cog):
                     FROM war_attacks 
                     WHERE war_id IN ({war_ids_str})
                     GROUP BY defender_tag
+                ),
+                AllTags AS (
+                    SELECT tag, name FROM Participants
+                    UNION
+                    SELECT tag, name FROM Offense
                 )
                 SELECT 
-                    o.name, o.tag, o.wars_participated, o.total_attacks,
-                    o.total_stars, o.avg_stars, o.total_dest, o.avg_dest,
-                    o.three_stars, o.two_stars, o.one_stars, o.zero_stars,
-                    o.avg_target_position, o.avg_target_distance, o.avg_th_distance,
+                    a.name, a.tag, 
+                    COALESCE(p.wars_participated, 1) as wars_participated,
+                    COALESCE(o.total_attacks, 0) as total_attacks,
+                    CASE 
+                        WHEN p.tag IS NOT NULL THEN (p.total_allowed - p.total_used)
+                        ELSE 0 
+                    END as missed_attacks,
+                    COALESCE(o.total_stars, 0) as total_stars, 
+                    COALESCE(o.avg_stars, 0) as avg_stars,
+                    COALESCE(o.true_stars, COALESCE(o.total_stars, 0)) as true_stars,
+                    COALESCE(o.total_dest, 0) as total_dest, 
+                    COALESCE(o.avg_dest, 0) as avg_dest,
+                    COALESCE(o.three_stars, 0) as three_stars, 
+                    COALESCE(o.two_stars, 0) as two_stars, 
+                    COALESCE(o.one_stars, 0) as one_stars, 
+                    COALESCE(o.zero_stars, 0) as zero_stars,
+                    COALESCE(o.avg_target_position, 0) as avg_target_position, 
+                    COALESCE(o.avg_target_distance, 0) as avg_target_distance, 
+                    COALESCE(o.avg_th_distance, 0) as avg_th_distance,
                     COALESCE(d.total_defenses, 0) as total_defenses, 
                     COALESCE(d.total_def_stars, 0) as total_def_stars, 
                     COALESCE(d.avg_def_stars, 0) as avg_def_stars, 
                     COALESCE(d.total_def_dest, 0) as total_def_dest, 
                     COALESCE(d.avg_def_dest, 0) as avg_def_dest
-                FROM Offense o
-                LEFT JOIN Defense d ON o.tag = d.tag
-                ORDER BY o.total_stars DESC, o.avg_dest DESC
+                FROM AllTags a
+                LEFT JOIN Participants p ON a.tag = p.tag
+                LEFT JOIN Offense o ON a.tag = o.tag
+                LEFT JOIN Defense d ON a.tag = d.tag
+                ORDER BY true_stars DESC, o.avg_dest DESC
             """)
             
             results = db.execute(query).mappings().all()
@@ -231,7 +265,7 @@ class RecapCommands(commands.Cog):
             csv_data = []
             for row in results:
                 th_level = members_th.get(row['tag'], "N/A")
-                missed = (row['wars_participated'] * max_atk) - row['total_attacks']
+                missed = row['missed_attacks']
                 if missed < 0: missed = 0
 
                 csv_data.append({
@@ -242,8 +276,8 @@ class RecapCommands(commands.Cog):
                     'Number of Attacks': row['total_attacks'],
                     'Total Stars': int(row['total_stars'] or 0),
                     'Avg. Stars': round(row['avg_stars'] or 0, 2),
-                    'True Stars': int(row['total_stars'] or 0), 
-                    'Avg. True Stars': round(row['avg_stars'] or 0, 2),
+                    'True Stars': int(row['true_stars'] or 0), 
+                    'Avg. True Stars': round((row['true_stars'] / row['total_attacks']) if row['total_attacks'] else 0, 2),
                     'Total Dest': int(row['total_dest'] or 0),
                     'Avg. Dest': round(row['avg_dest'] or 0, 2),
                     'Three Stars': int(row['three_stars'] or 0),
@@ -267,15 +301,15 @@ class RecapCommands(commands.Cog):
             pdf_buffer = self._generate_pdf(csv_data, clan_tag.replace('#', ''), is_cwl)
             
             file_csv = discord.File(fp=csv_buffer, filename=f"Data_Lengkap_{tipe_file}_{clan_tag.replace('#', '')}.csv")
-            file_pdf = discord.File(fp=pdf_buffer, filename=f"Laporan_Tabel_{tipe_file}_{clan_tag.replace('#', '')}.pdf")
+            file_pdf = discord.File(fp=pdf_buffer, filename=f"Laporan_Komprehensif_{tipe_file}_{clan_tag.replace('#', '')}.pdf")
 
             embed = discord.Embed(
-                title=f"📊 Laporan Akumulasi {tipe_file} — {clan_tag}",
-                description=f"Total Perang Tercatat: **{len(wars)} War**\nFile **PDF** (Analitik & Grafik) dan **CSV** (Data Full) telah dilampirkan.",
+                title=f"📊 Laporan Analitik {tipe_file} — {clan_tag}",
+                description=f"Total Perang Tercatat: **{len(wars)} War**\nDokumen ringkasan analitik visual dan lembar data mentah telah dilampirkan.",
                 color=discord.Color.purple() if is_cwl else discord.Color.blue()
             )
             
-            embed.set_footer(text="Niki CoC Bot — Supporter Analytics System")
+            embed.set_footer(text="ixiera.id — Operating System Studio | WA: https://wa.me/6285736048626")
             await interaction.followup.send(embed=embed, files=[file_pdf, file_csv])
 
         except Exception as e:
@@ -284,12 +318,12 @@ class RecapCommands(commands.Cog):
         finally:
             db.close()
 
-    @app_commands.command(name="rekap-cwl", description="[MEMBER+] Rekap akumulasi performa CWL (Export PDF & CSV)")
+    @app_commands.command(name="rekap-cwl", description="[MEMBER+] Unduh laporan komprehensif performa CWL clan")
     async def rekap_cwl(self, interaction: discord.Interaction):
         await interaction.response.defer()
         await self._generate_recap(interaction, is_cwl=True)
 
-    @app_commands.command(name="rekap-war", description="[MEMBER+] Rekap akumulasi performa War Biasa (Export PDF & CSV)")
+    @app_commands.command(name="rekap-war", description="[MEMBER+] Unduh laporan komprehensif performa War Biasa clan")
     async def rekap_war(self, interaction: discord.Interaction):
         await interaction.response.defer()
         await self._generate_recap(interaction, is_cwl=False)
