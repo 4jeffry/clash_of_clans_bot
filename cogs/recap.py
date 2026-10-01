@@ -29,7 +29,6 @@ class RecapCommands(commands.Cog):
         return io.BytesIO(output.getvalue().encode('utf-8'))
 
     def _create_graph(self, data, title):
-        # Grafik sekarang difokuskan pada TRUE STARS (Bintang Murni Esports)
         top_data = sorted(data, key=lambda x: x['True Stars'], reverse=True)[:5]
         names = [str(x['Name'])[:10] for x in top_data]
         stars = [x['True Stars'] for x in top_data]
@@ -65,7 +64,6 @@ class RecapCommands(commands.Cog):
 
         tipe = "CWL Season" if is_cwl else "War Biasa"
         
-        # HALAMAN 1: GRAFIK
         elements.append(Paragraph(f"Laporan Analitik Kompetitif {tipe} — {clan_tag}", title_style))
         elements.append(Spacer(1, 20))
         
@@ -73,7 +71,6 @@ class RecapCommands(commands.Cog):
         elements.append(Image(graph_buf, width=500, height=280))
         elements.append(PageBreak())
 
-        # HALAMAN 2: TABEL OFFENSE
         elements.append(Paragraph("Tabel 1: Statistik Serangan (True Stars & Destruksi)", styles['Heading2']))
         elements.append(Spacer(1, 10))
         
@@ -106,7 +103,6 @@ class RecapCommands(commands.Cog):
         elements.append(t_offense)
         elements.append(PageBreak())
 
-        # HALAMAN 3: TABEL DEFENSE & CATATAN
         elements.append(Paragraph("Tabel 2: Pertahanan & Indeks Taktis Perang", styles['Heading2']))
         elements.append(Spacer(1, 10))
         
@@ -173,7 +169,6 @@ class RecapCommands(commands.Cog):
             war_ids = [str(w.id) for w in wars]
             war_ids_str = ",".join(war_ids)
 
-            # QUERY FASE 2: FULL METRICS (PARTICIPANTS, OFFENSE, DEFENSE, NET STARS)
             query = text(f"""
                 WITH Participants AS (
                     SELECT 
@@ -181,7 +176,12 @@ class RecapCommands(commands.Cog):
                         MAX(player_name) as name,
                         COUNT(DISTINCT war_id) as wars_participated,
                         SUM(attacks_allowed) as total_allowed,
-                        SUM(attacks_used) as total_used
+                        SUM(attacks_used) as total_used,
+                        SUM(opp_attacks_count) as total_defenses,
+                        SUM(best_opp_stars) as total_def_stars,
+                        AVG(NULLIF(best_opp_stars, 0)) as avg_def_stars,
+                        SUM(best_opp_destruction) as total_def_dest,
+                        AVG(NULLIF(best_opp_destruction, 0)) as avg_def_dest
                     FROM war_participants 
                     WHERE war_id IN ({war_ids_str})
                     GROUP BY player_tag
@@ -206,18 +206,6 @@ class RecapCommands(commands.Cog):
                     FROM war_attacks 
                     WHERE war_id IN ({war_ids_str})
                     GROUP BY attacker_tag
-                ),
-                Defense AS (
-                    SELECT 
-                        defender_tag as tag,
-                        COUNT(id) as total_defenses,
-                        SUM(stars) as total_def_stars,
-                        AVG(stars) as avg_def_stars,
-                        SUM(destruction_percentage) as total_def_dest,
-                        AVG(destruction_percentage) as avg_def_dest
-                    FROM war_attacks 
-                    WHERE war_id IN ({war_ids_str})
-                    GROUP BY defender_tag
                 ),
                 AllTags AS (
                     SELECT tag, name FROM Participants
@@ -244,15 +232,14 @@ class RecapCommands(commands.Cog):
                     COALESCE(o.avg_target_position, 0) as avg_target_position, 
                     COALESCE(o.avg_target_distance, 0) as avg_target_distance, 
                     COALESCE(o.avg_th_distance, 0) as avg_th_distance,
-                    COALESCE(d.total_defenses, 0) as total_defenses, 
-                    COALESCE(d.total_def_stars, 0) as total_def_stars, 
-                    COALESCE(d.avg_def_stars, 0) as avg_def_stars, 
-                    COALESCE(d.total_def_dest, 0) as total_def_dest, 
-                    COALESCE(d.avg_def_dest, 0) as avg_def_dest
+                    COALESCE(p.total_defenses, 0) as total_defenses, 
+                    COALESCE(p.total_def_stars, 0) as total_def_stars, 
+                    COALESCE(p.avg_def_stars, 0) as avg_def_stars, 
+                    COALESCE(p.total_def_dest, 0) as total_def_dest, 
+                    COALESCE(p.avg_def_dest, 0) as avg_def_dest
                 FROM AllTags a
                 LEFT JOIN Participants p ON a.tag = p.tag
                 LEFT JOIN Offense o ON a.tag = o.tag
-                LEFT JOIN Defense d ON a.tag = d.tag
                 ORDER BY true_stars DESC, o.avg_dest DESC
             """)
             
