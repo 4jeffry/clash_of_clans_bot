@@ -4,7 +4,7 @@ import asyncio
 from google import genai
 from google.genai import types
 from services.db import get_db
-from models import ClanMember, ServerConfig
+from models import ClanMember, ServerConfig, WarHistory
 from datetime import datetime
 
 logger = logging.getLogger('bot.llm')
@@ -30,6 +30,31 @@ def _check_pro_access(guild_id: str):
         return config, None
     finally:
         db.close()
+
+async def _generate_with_fallback(client, contents):
+    """Helper untuk eksekusi LLM dengan mekanisme fallback model otomatis."""
+    models_to_try = ['gemini-3.6-flash', 'gemini-3.5-flash-lite']
+    max_retries = 3
+    
+    for model_name in models_to_try:
+        for attempt in range(max_retries):
+            try:
+                response = await client.aio.models.generate_content(model=model_name, contents=contents)
+                return response.text
+            except Exception as e:
+                error_msg = str(e).upper()
+                # Jika server sibuk atau limit, tunggu dan retry di model yang sama
+                if "503" in error_msg or "UNAVAILABLE" in error_msg or "429" in error_msg or "TOO_MANY_REQUESTS" in error_msg:
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(2 ** attempt)
+                        continue
+                
+                # Jika error persisten (misal 404 model not found) atau retry habis, lanjut ke fallback model
+                logger.warning(f"Model {model_name} gagal dieksekusi: {e}. Beralih ke fallback...")
+                break 
+                
+    logger.error("Semua model AI gagal merespons.")
+    return "❌ Server AI sedang mengalami gangguan atau limitasi. Mohon coba beberapa saat lagi."
 
 async def run_ai_audit(guild_id: str) -> str:
     api_key = os.getenv("GEMINI_API_KEY")
@@ -76,18 +101,7 @@ async def run_ai_audit(guild_id: str) -> str:
     )
 
     client = genai.Client(api_key=api_key)
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            response = await client.aio.models.generate_content(model='gemini-3.6-flash', contents=prompt)
-            return response.text
-        except Exception as e:
-            if "503" in str(e) or "UNAVAILABLE" in str(e):
-                if attempt < max_retries - 1:
-                    await asyncio.sleep(2 ** attempt)
-                    continue
-            logger.error(f"Error AI Audit: {e}")
-            return "❌ Server AI sedang kelebihan beban. Mohon coba beberapa menit lagi."
+    return await _generate_with_fallback(client, prompt)
 
 async def run_war_strategy(guild_id: str, war_data: dict) -> str:
     api_key = os.getenv("GEMINI_API_KEY")
@@ -123,20 +137,8 @@ async def run_war_strategy(guild_id: str, war_data: dict) -> str:
     )
 
     client = genai.Client(api_key=api_key)
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            response = await client.aio.models.generate_content(model='gemini-3.6-flash', contents=prompt)
-            return response.text
-        except Exception as e:
-            if "503" in str(e) or "UNAVAILABLE" in str(e):
-                if attempt < max_retries - 1:
-                    await asyncio.sleep(2 ** attempt)
-                    continue
-            logger.error(f"Error War Strategy: {e}")
-            return "❌ Server AI sedang kelebihan beban. Mohon coba beberapa menit lagi."
+    return await _generate_with_fallback(client, prompt)
 
-# FUNGSI VISION: Screenshot Base + Opsional Input Combo/Pasukan
 async def run_visual_strategy(guild_id: str, image_bytes: bytes, detail_pasukan: str = None) -> str:
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
@@ -159,21 +161,8 @@ async def run_visual_strategy(guild_id: str, image_bytes: bytes, detail_pasukan:
     )
 
     client = genai.Client(api_key=api_key)
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            response = await client.aio.models.generate_content(
-                model='gemini-3.6-flash',
-                contents=[types.Part.from_bytes(data=image_bytes, mime_type='image/jpeg'), prompt]
-            )
-            return response.text
-        except Exception as e:
-            if "503" in str(e) or "UNAVAILABLE" in str(e):
-                if attempt < max_retries - 1:
-                    await asyncio.sleep(2 ** attempt)
-                    continue
-            logger.error(f"Error Visual Strategy: {e}")
-            return "❌ Server AI sedang kelebihan beban. Mohon coba beberapa menit lagi."
+    contents = [types.Part.from_bytes(data=image_bytes, mime_type='image/jpeg'), prompt]
+    return await _generate_with_fallback(client, contents)
 
 async def run_ai_screen(guild_id: str, player_data: dict) -> str:
     api_key = os.getenv("GEMINI_API_KEY")
@@ -191,43 +180,36 @@ async def run_ai_screen(guild_id: str, player_data: dict) -> str:
     received = player_data.get('donationsReceived', 0)
     war_stars = player_data.get('warStars', 0)
     heroes = player_data.get('heroes', [])
+    equipment = player_data.get('heroEquipment', [])
 
     hero_info = ", ".join([f"{h['name']} (Lv {h['level']})" for h in heroes if h.get('village') == 'home'])
+    equip_info = ", ".join([f"{e['name']} (Lv {e['level']})" for e in equipment])[:200] + "..." if equipment else "Tidak ada data"
 
     prompt = f"""
     Kamu adalah Niki, AI Assistant Clan Clash of Clans.
-    Tugasmu: Analisis profil calon member.
-    Gaya bahasa: Santai, humble, singkat, padat, dan jelas. JANGAN gunakan kata "beban". Berikan evaluasi yang objektif namun suportif.
+    Tugasmu: Analisis mendalam profil calon member baru.
+    Gaya bahasa: Santai, humble, singkat, padat, dan jelas. JANGAN gunakan kata "beban". Berikan evaluasi objektif.
 
     Data Player:
     - Nama: {name} ({tag})
     - Town Hall: {th}
     - Donasi Diberikan: {donations} | Diterima: {received}
-    - War Stars: {war_stars}
-    - Level Hero: {hero_info}
+    - Total War Stars: {war_stars}
+    - Level Hero Utama: {hero_info}
+    - Hero Equipment Aktif: {equip_info}
 
     Format Output (Gunakan Markdown):
     🔍 **Intel Rekrutmen — {name}** (TH {th})
-    • **Donasi:** [1 kalimat analisis rasio]
-    • **Kesiapan War:** [1 kalimat analisis level hero vs TH & war stars]
+    • **Loyalitas & Donasi:** [Analisis ringkas rasio donasi]
+    • **Kekuatan Tempur:** [Analisis level hero vs max TH tersebut & equipment-nya, apakah rushed atau matang]
+    • **Jam Terbang War:** [Analisis dari total war stars]
     
-    📌 **Verdict:** [Pilih: 🟢 Gass Acc / ⚠️ Pantau Dulu / 🔴 Skip Aja]
-    💬 *Saran Niki:* [1 kalimat saran suportif untuk Leader]
+    📌 **Verdict Akhir:** [Pilih salah satu: 🟢 GASS TERIMA / ⚠️ PANTAU DULU / 🔴 SKIP AJA]
+    💬 *Catatan Khusus Niki:* [1-2 kalimat saran taktis untuk Leader/Co-Leader jika menerima player ini]
     """
 
     client = genai.Client(api_key=api_key)
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            response = await client.aio.models.generate_content(model='gemini-3.6-flash', contents=prompt)
-            return response.text
-        except Exception as e:
-            if "503" in str(e) or "UNAVAILABLE" in str(e):
-                if attempt < max_retries - 1:
-                    await asyncio.sleep(2 ** attempt)
-                    continue
-            logger.error(f"Error AI Screen: {e}")
-            return "❌ Server AI sedang sibuk. Coba beberapa menit lagi."
+    return await _generate_with_fallback(client, prompt)
 
 async def run_ai_scout(guild_id: str, war_data: dict) -> str:
     api_key = os.getenv("GEMINI_API_KEY")
@@ -249,25 +231,72 @@ async def run_ai_scout(guild_id: str, war_data: dict) -> str:
     Data Lawan:
     - Nama Clan: {opponent.get('name')}
     - Tag: {opponent.get('tag')}
-    - Jumlah Member: {len(members)}
+    - Jumlah Member War: {len(members)}
 
     Format Output (Gunakan Markdown):
     ⚔️ **Intel War Lawan — {opponent.get('name')}**
-    🎯 **Target Empuk:** [1-2 kalimat sebutkan ciri base/TH lawan yang gampang diratakan]
+    🎯 **Target Empuk:** [1-2 kalimat sebutkan ciri base/TH lawan yang gampang diratakan secara umum]
     ⚠️ **Waspada:** [1-2 kalimat sebutkan ciri base lawan yang pertahanannya max]
     💡 **Taktik Niki:** [1 kalimat saran komposisi pasukan secara umum]
     """
 
     client = genai.Client(api_key=api_key)
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            response = await client.aio.models.generate_content(model='gemini-3.6-flash', contents=prompt)
-            return response.text
-        except Exception as e:
-            if "503" in str(e) or "UNAVAILABLE" in str(e):
-                if attempt < max_retries - 1:
-                    await asyncio.sleep(2 ** attempt)
-                    continue
-            logger.error(f"Error AI Scout: {e}")
-            return "❌ Server AI sedang sibuk. Coba beberapa menit lagi."
+    return await _generate_with_fallback(client, prompt)
+
+async def run_ai_opponent(guild_id: str, clan_tag: str, war_data: dict) -> str:
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        return "❌ API Key AI belum dikonfigurasi."
+
+    config, err_msg = _check_pro_access(guild_id)
+    if err_msg:
+        return err_msg
+
+    opponent = war_data.get('opponent', {})
+    opp_tag = opponent.get('tag')
+    
+    db = get_db()
+    history_data = []
+    try:
+        histories = db.query(WarHistory).filter(WarHistory.clan_tag == clan_tag).order_by(WarHistory.id.desc()).limit(5).all()
+        for h in histories:
+            history_data.append(f"- Lawan {h.opponent_name}: {h.result} ({h.stars} Bintang, {h.destruction_percentage}%)")
+    finally:
+        db.close()
+
+    from services.coc_client import CoCClient
+    coc_client = CoCClient()
+    opp_info = await coc_client.get_clan_info(opp_tag)
+
+    context = f"""
+    DATA PERANG SAAT INI:
+    Klan Kita: {war_data.get('clan', {}).get('name')}
+    Lawan: {opponent.get('name')} ({opp_tag})
+    Ukuran Tim: {war_data.get('teamSize')} vs {war_data.get('teamSize')}
+    Level Klan Lawan: {opp_info.get('clanLevel', 'N/A') if opp_info else 'N/A'}
+    Win Streak Lawan: {opp_info.get('warWinStreak', 0) if opp_info else 'N/A'}
+    Total War Won Lawan: {opp_info.get('warWins', 0) if opp_info else 'N/A'}
+    
+    HISTORI 5 WAR TERAKHIR KLAN KITA:
+    {chr(10).join(history_data) if history_data else 'Belum ada riwayat tercatat.'}
+    """
+
+    prompt = f"""
+    Kamu adalah Niki, AI Tactical Analyst Clash of Clans tingkat Esports.
+    Tugasmu: Berikan analisis mendalam mengenai kekuatan klan lawan dan estimasi persentase peluang menang klan kita.
+    Gaya bahasa: Objektif, analitik tajam, humble, dan membangun semangat tempur. JANGAN ragu menyatakan jika lawan terlalu berat.
+
+    {context}
+
+    Format Output (Gunakan Markdown Discord):
+    🎯 **Scouting Intel Lawan — {opponent.get('name')}**
+    • **Kekuatan Lawan:** [Analisis ringkas kekuatan lawan dari Win Streak, War Wins, dan Level Clan]
+    • **Peluang Menang:** [Sebutkan estimasi persentase, contoh: "Sekitar 65%". Berikan alasan rasional berdasarkan histori klan kita vs kekuatan lawan]
+
+    💡 **Rekomendasi Taktis Fase Prep Day:**
+    1. [Saran eksekusi target (misal: "Disiplin mirror dulu" atau "Prioritaskan clean-up bottom half")]
+    2. [Catatan disiplin attack untuk member]
+    """
+
+    client = genai.Client(api_key=api_key)
+    return await _generate_with_fallback(client, prompt)

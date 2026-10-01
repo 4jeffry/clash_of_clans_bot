@@ -6,7 +6,8 @@ from services.llm_client import (
     run_war_strategy, 
     run_visual_strategy, 
     run_ai_screen, 
-    run_ai_scout
+    run_ai_scout,
+    run_ai_opponent  # TAMBAHAN FASE 2
 )
 from services.coc_client import CoCClient
 from services.db import get_db
@@ -94,6 +95,24 @@ class AICog(commands.Cog):
             return await interaction.followup.send("❌ Clan sedang tidak dalam periode War aktif!")
 
         result = await run_ai_scout(str(interaction.guild_id), war_data)
+        await self.send_long_message(interaction, result)
+
+    # ==========================================
+    # TAMBAHAN COMMAND BARU FASE 2
+    # ==========================================
+    @app_commands.command(name="ai-opponent", description="[AI PRO] Scouting klan lawan: estimasi peluang menang & analisis kekuatan")
+    async def ai_opponent(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        clan_tag = self.get_clan_tag(interaction.guild_id)
+        if not clan_tag:
+            return await interaction.followup.send("❌ Server belum di-setup! Gunakan `/setup`.")
+
+        war_data = await self.coc.get_current_war(clan_tag)
+        if not war_data or war_data.get('state') not in ['inWar', 'preparation']:
+            return await interaction.followup.send("❌ Clan sedang tidak dalam periode War aktif!")
+
+        # Logic AI didelegasikan ke llm_client.py agar struktur tetap rapi
+        result = await run_ai_opponent(str(interaction.guild_id), clan_tag, war_data)
         await self.send_long_message(interaction, result)
 
 async def setup(bot):

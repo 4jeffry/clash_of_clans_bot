@@ -72,6 +72,7 @@ class CustomHelp(commands.Cog):
                 "*(Dukungan ekstra untuk menutupi biaya AI)*\n"
                 f"• {get_cmd('ai-audit')} — Audit kesehatan clan & evaluasi member\n"
                 f"• {get_cmd('ai-screen')} — Intel profil calon member sebelum di-acc\n"
+                f"• {get_cmd('ai-opponent')} — Intel scouting klan lawan & estimasi peluang menang\n"
                 f"• {get_cmd('ai-scout')} — Intel war lawan & target base paling rentan\n"
                 f"• {get_cmd('war-strategy')} — Analisis agregat war saat ini\n"
                 f"• {get_cmd('base-scan')} — Upload foto base musuh untuk cari titik lemah"
