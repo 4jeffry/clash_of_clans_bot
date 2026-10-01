@@ -49,7 +49,6 @@ class War(Base):
     cwl_season_id = Column(Integer, ForeignKey('cwl_seasons.id', ondelete='SET NULL'), nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     
-    # Kolom Baru (Update Fase 1)
     start_time = Column(DateTime, nullable=True)
     end_time = Column(DateTime, nullable=True)
     result = Column(String(10), nullable=True)
@@ -114,6 +113,10 @@ class WarParticipant(Base):
     attacks_used = Column(Integer, default=0)
     attacks_allowed = Column(Integer, default=2)
 
+    opp_attacks_count = Column(Integer, default=0)
+    best_opp_stars = Column(Integer, default=0)
+    best_opp_destruction = Column(Numeric(5, 2), default=0.0)
+
     __table_args__ = (
         UniqueConstraint('war_id', 'player_tag', name='uq_war_participant'),
     )
@@ -130,7 +133,7 @@ class MemberSnapshot(Base):
     war_preference = Column(String(10))
     donations = Column(Integer)
     donations_received = Column(Integer)
-    heroes = Column(JSONB)     # Membutuhkan psycopg2 / psycopg binary untuk JSONB
+    heroes = Column(JSONB)
     equipment = Column(JSONB)
 
     __table_args__ = (
