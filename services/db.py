@@ -58,6 +58,13 @@ def check_standar_access(guild_id: str) -> tuple[bool, str]:
         now = datetime.now()
         tier = str(config.tier).lower() if config.tier else "free"
         
+        # Cek Expiry (Jika masa aktif habis, turunkan otomatis ke free di DB)
+        if config.expired_at and config.expired_at < now:
+            config.tier = "free"
+            config.expired_at = None
+            db.commit()
+            tier = "free"
+
         # Free Tier Ditolak
         if tier == "free":
             return False, (
@@ -66,10 +73,10 @@ def check_standar_access(guild_id: str) -> tuple[bool, str]:
                 "Hubungi Admin Ixiera (`ixiera.id`) untuk membuka semua fitur utility & auto alert!"
             )
             
-        # Cek Expiry (Jika tier Pro atau Standar)
-        if config.expired_at and config.expired_at < now:
-            return False, "⚠️ **Masa Aktif Lisensi Habis**. Hubungi Admin Ixiera untuk memperpanjang!"
-            
         return True, ""
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error checking access for {guild_id}: {e}")
+        return False, "❌ Terjadi kesalahan saat memeriksa lisensi server."
     finally:
         db.close()
