@@ -31,19 +31,27 @@ def run_heavy_sync_task():
     try:
         db = get_db()
         try:
-            # 0. CEK DAN RESET EXPIRED TRIAL/TIER
-            expired_configs = db.query(ServerConfig).filter(
+            # 0. CEK DAN RESET EXPIRED TRIAL/TIER (Timezone Aware Fix)
+            now_utc = datetime.now(timezone.utc)
+            all_non_free = db.query(ServerConfig).filter(
                 ServerConfig.tier != 'free',
-                ServerConfig.expired_at.isnotnull(),
-                ServerConfig.expired_at < datetime.utcnow()
+                ServerConfig.expired_at.isnotnull()
             ).all()
             
-            for cfg in expired_configs:
-                logger.info(f"Menurunkan tier {cfg.clan_tag} ke free karena masa aktif habis.")
-                cfg.tier = 'free'
-                cfg.expired_at = None
+            expired_count = 0
+            for cfg in all_non_free:
+                exp = cfg.expired_at
+                # Pastikan expired_at punya timezone UTC biar akurat dibandingkannya
+                if exp.tzinfo is None:
+                    exp = exp.replace(tzinfo=timezone.utc)
+                    
+                if exp < now_utc:
+                    logger.info(f"Menurunkan tier {cfg.clan_tag} ke free karena masa aktif habis ({cfg.expired_at}).")
+                    cfg.tier = 'free'
+                    cfg.expired_at = None
+                    expired_count += 1
                 
-            if expired_configs:
+            if expired_count > 0:
                 db.commit()
                 
             # Ambil ulang data config setelah reset
