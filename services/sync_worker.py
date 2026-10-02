@@ -30,9 +30,31 @@ def run_heavy_sync_task():
     
     try:
         db = get_db()
-        configs = db.query(ServerConfig).all()
-        config_list = [{"clan_tag": c.clan_tag, "tier": c.tier, "alert_channel_id": c.alert_channel_id} for c in configs]
-        db.close()
+        try:
+            # 0. CEK DAN RESET EXPIRED TRIAL/TIER
+            expired_configs = db.query(ServerConfig).filter(
+                ServerConfig.tier != 'free',
+                ServerConfig.expired_at.isnotnull(),
+                ServerConfig.expired_at < datetime.utcnow()
+            ).all()
+            
+            for cfg in expired_configs:
+                logger.info(f"Menurunkan tier {cfg.clan_tag} ke free karena masa aktif habis.")
+                cfg.tier = 'free'
+                cfg.expired_at = None
+                
+            if expired_configs:
+                db.commit()
+                
+            # Ambil ulang data config setelah reset
+            configs = db.query(ServerConfig).all()
+            config_list = [{"clan_tag": c.clan_tag, "tier": c.tier, "alert_channel_id": c.alert_channel_id} for c in configs]
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Error mengambil config atau reset tier: {e}")
+            config_list = []
+        finally:
+            db.close()
         
         if not config_list:
             return alerts_to_send
