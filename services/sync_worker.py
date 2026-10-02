@@ -12,6 +12,7 @@ logger = logging.getLogger('bot.sync_worker')
 
 # Set in-memory penanda alert
 _alerted_wars = set()
+_alerted_private_clans = set()
 
 def _parse_time(time_str: str):
     if not time_str: return None
@@ -31,7 +32,7 @@ def run_heavy_sync_task():
     try:
         db = get_db()
         try:
-            # 0. CEK DAN RESET EXPIRED TRIAL/TIER (Best Practice Fix)
+            # 0. CEK DAN RESET EXPIRED TRIAL/TIER
             now_utc = datetime.now(timezone.utc)
             expired_configs = db.query(ServerConfig).filter(
                 ServerConfig.tier != 'free',
@@ -47,7 +48,6 @@ def run_heavy_sync_task():
             if expired_configs:
                 db.commit()
                 
-            # Ambil ulang data config setelah reset
             configs = db.query(ServerConfig).all()
             config_list = [{"clan_tag": c.clan_tag, "tier": c.tier, "alert_channel_id": c.alert_channel_id} for c in configs]
         except Exception as e:
@@ -70,31 +70,50 @@ def run_heavy_sync_task():
                 
             db = get_db()
             try:
-                # 1. MEMBER SYNC
+                # 1. MEMBER SYNC (Fix Duplicate Key via UPSERT)
                 api_members = clan_data.get('memberList', [])
                 api_tags = [m['tag'] for m in api_members]
+                
+                # Hapus member lokal yang sudah keluar klan
                 db_members = db.query(ClanMember).filter(ClanMember.clan_tag == clan_tag).all()
-                db_tags = [m.tag for m in db_members]
-
                 for db_m in db_members:
                     if db_m.tag not in api_tags:
-                        if alert_ch_id: alerts_to_send.append((alert_ch_id, f"🚨 **Member Keluar:** `{db_m.name}` (TH {db_m.townhall_level}) baru saja meninggalkan clan."))
+                        if alert_ch_id: 
+                            alerts_to_send.append((alert_ch_id, f"🚨 **Member Keluar:** `{db_m.name}` (TH {db_m.townhall_level}) baru saja meninggalkan clan."))
                         db.delete(db_m)
-
-                for member in api_members:
-                    db_member = next((m for m in db_members if m.tag == member['tag']), None)
-                    if not db_member:
-                        if alert_ch_id and len(db_tags) > 0:
-                            alerts_to_send.append((alert_ch_id, f"👋 **Member Baru Masuk:** Selamat datang `{member['name']}` (TH {member['townHallLevel']}) di clan!"))
-                        db_member = ClanMember(tag=member['tag'], clan_tag=clan_tag)
-                        db.add(db_member)
-                    db_member.name = member['name']
-                    db_member.role = member['role']
-                    db_member.townhall_level = member['townHallLevel']
-                    db_member.donations = member['donations']
-                    db_member.donations_received = member['donationsReceived']
-                    db_member.last_updated = datetime.utcnow()
                 db.commit()
+
+                # Batch UPSERT Member
+                members_batch = []
+                now_time = datetime.utcnow()
+                for member in api_members:
+                    members_batch.append({
+                        'tag': member['tag'],
+                        'clan_tag': clan_tag,
+                        'name': member['name'],
+                        'role': member['role'],
+                        'townhall_level': member['townHallLevel'],
+                        'donations': member['donations'],
+                        'donations_received': member['donationsReceived'],
+                        'last_updated': now_time
+                    })
+
+                if members_batch:
+                    stmt = insert(ClanMember).values(members_batch)
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=['tag'],
+                        set_=dict(
+                            clan_tag=stmt.excluded.clan_tag,
+                            name=stmt.excluded.name,
+                            role=stmt.excluded.role,
+                            townhall_level=stmt.excluded.townhall_level,
+                            donations=stmt.excluded.donations,
+                            donations_received=stmt.excluded.donations_received,
+                            last_updated=stmt.excluded.last_updated
+                        )
+                    )
+                    db.execute(stmt)
+                    db.commit()
                 
                 # 2. DAILY SNAPSHOT
                 today = date.today()
@@ -138,9 +157,23 @@ def run_heavy_sync_task():
             finally:
                 db.close()
 
-            # 3. WAR SYNC
+            # 3. WAR SYNC & AUTO BROADCAST PRIVATE WAR LOG
             war_data = loop.run_until_complete(coc.get_current_war(clan_tag))
-            if war_data and war_data.get('state') != 'notInWar':
+            
+            # Auto Broadcast jika War Log Private (403)
+            if isinstance(war_data, dict) and war_data.get('error_status') == 403:
+                if alert_ch_id and clan_tag not in _alerted_private_clans:
+                    msg = (
+                        "⚠️ **Perhatian Leader / Co-Leader!**\n"
+                        f"Log Perang untuk klan `{clan_tag}` terdeteksi **PRIVATE** di game Clash of Clans.\n\n"
+                        "💡 **Dampak:** Bot tidak dapat membaca data statistik perang, serangan otomatis, maupun riwayat war.\n"
+                        "🔧 **Solusi:** Buka game CoC > *Clan Settings* > Ubah **War Log** menjadi **Public** agar semua fitur bot berfungsi maksimal!"
+                    )
+                    alerts_to_send.append((alert_ch_id, msg))
+                    _alerted_private_clans.add(clan_tag)
+                continue
+            elif war_data and war_data.get('state') != 'notInWar':
+                _alerted_private_clans.discard(clan_tag) # Reset jika sudah public lagi
                 db = get_db()
                 try:
                     state = war_data.get('state')
