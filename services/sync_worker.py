@@ -70,11 +70,10 @@ def run_heavy_sync_task():
                 
             db = get_db()
             try:
-                # 1. MEMBER SYNC (Fix Duplicate Key via UPSERT)
+                # 1. MEMBER SYNC (UPSERT Fix)
                 api_members = clan_data.get('memberList', [])
                 api_tags = [m['tag'] for m in api_members]
                 
-                # Hapus member lokal yang sudah keluar klan
                 db_members = db.query(ClanMember).filter(ClanMember.clan_tag == clan_tag).all()
                 for db_m in db_members:
                     if db_m.tag not in api_tags:
@@ -83,7 +82,6 @@ def run_heavy_sync_task():
                         db.delete(db_m)
                 db.commit()
 
-                # Batch UPSERT Member
                 members_batch = []
                 now_time = datetime.utcnow()
                 for member in api_members:
@@ -160,20 +158,25 @@ def run_heavy_sync_task():
             # 3. WAR SYNC & AUTO BROADCAST PRIVATE WAR LOG
             war_data = loop.run_until_complete(coc.get_current_war(clan_tag))
             
-            # Auto Broadcast jika War Log Private (403)
-            if isinstance(war_data, dict) and war_data.get('error_status') == 403:
-                if alert_ch_id and clan_tag not in _alerted_private_clans:
-                    msg = (
-                        "⚠️ **Perhatian Leader / Co-Leader!**\n"
-                        f"Log Perang untuk klan `{clan_tag}` terdeteksi **PRIVATE** di game Clash of Clans.\n\n"
-                        "💡 **Dampak:** Bot tidak dapat membaca data statistik perang, serangan otomatis, maupun riwayat war.\n"
-                        "🔧 **Solusi:** Buka game CoC > *Clan Settings* > Ubah **War Log** menjadi **Public** agar semua fitur bot berfungsi maksimal!"
-                    )
-                    alerts_to_send.append((alert_ch_id, msg))
-                    _alerted_private_clans.add(clan_tag)
+            # Jika war_data None (biasanya karena 403 / Private War Log atau Not In War)
+            if not war_data:
+                # Cek khusus apakah War Log private
+                is_war_public = clan_data.get('isWarLogPublic', True)
+                if not is_war_public:
+                    if alert_ch_id and clan_tag not in _alerted_private_clans:
+                        msg = (
+                            "⚠️ **Perhatian Leader / Co-Leader!**\n"
+                            f"Log Perang untuk klan **{clan_data.get('name', clan_tag)}** (`{clan_tag}`) terdeteksi **PRIVATE** di game Clash of Clans.\n\n"
+                            "💡 **Dampak:** Bot tidak dapat membaca statistik perang, otomatisasi alert, maupun rekap war.\n"
+                            "🔧 **Solusi:** Buka game CoC > *Clan Settings* > Ubah **War Log** menjadi **Public** agar fitur bot berjalan maksimal!"
+                        )
+                        alerts_to_send.append((alert_ch_id, msg))
+                        _alerted_private_clans.add(clan_tag)
                 continue
-            elif war_data and war_data.get('state') != 'notInWar':
-                _alerted_private_clans.discard(clan_tag) # Reset jika sudah public lagi
+
+            # Jika war_data valid
+            if war_data and war_data.get('state') != 'notInWar':
+                _alerted_private_clans.discard(clan_tag) # Reset penanda jika war log diset public kembali
                 db = get_db()
                 try:
                     state = war_data.get('state')
