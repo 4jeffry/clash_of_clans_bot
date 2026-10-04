@@ -5,6 +5,16 @@ from services.coc_client import CoCClient
 from services.db import get_db, check_standar_access
 from models import ServerConfig
 
+def create_progress_bar(percentage: float, length: int = 10) -> str:
+    """Helper untuk membuat visual progress bar"""
+    try:
+        percentage = float(percentage)
+    except (ValueError, TypeError):
+        percentage = 0.0
+    filled = int((percentage / 100) * length)
+    empty = length - filled
+    return f"`[{'█' * filled}{'▒' * empty}] {percentage}%`"
+
 class WarCommands(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -58,10 +68,22 @@ class WarCommands(commands.Cog):
         clan = war_data.get('clan', {})
         opponent = war_data.get('opponent', {})
         
+        clan_dest = clan.get('destructionPercentage', 0)
+        opp_dest = opponent.get('destructionPercentage', 0)
+        
         embed = discord.Embed(title=f"War Status: {state.capitalize()}", color=discord.Color.red())
-        embed.add_field(name=clan.get('name', 'Clan Kita'), value=f"⭐ Bintang: {clan.get('stars', 0)}\n🔥 Hancur: {clan.get('destructionPercentage', 0)}%", inline=True)
+        
+        embed.add_field(
+            name=f"🛡️ {clan.get('name', 'Clan Kita')}", 
+            value=f"**⭐ Bintang:** {clan.get('stars', 0)}\n**🔥 Hancur:**\n{create_progress_bar(clan_dest)}", 
+            inline=True
+        )
         embed.add_field(name="VS", value="⚔️", inline=True)
-        embed.add_field(name=opponent.get('name', 'Lawan'), value=f"⭐ Bintang: {opponent.get('stars', 0)}\n🔥 Hancur: {opponent.get('destructionPercentage', 0)}%", inline=True)
+        embed.add_field(
+            name=f"💀 {opponent.get('name', 'Lawan')}", 
+            value=f"**⭐ Bintang:** {opponent.get('stars', 0)}\n**🔥 Hancur:**\n{create_progress_bar(opp_dest)}", 
+            inline=True
+        )
         
         await interaction.followup.send(embed=embed)
 
