@@ -37,7 +37,6 @@ class CoCClient:
                 logger.error(f"[CoC API Error] Status: {response.status} | URL: {url} | Detail: {error_text}")
                 return None
 
-    # DISISIPKAN: Ditambahkan untuk melayani fitur /ai-screen
     async def get_player_info(self, player_tag: str):
         if not player_tag:
             return None
@@ -72,7 +71,6 @@ class CoCClient:
                 logger.error(f"[CoC API Error War] Status: {response.status} | URL: {url} | Detail: {error_text}")
                 return None
 
-    # TAMBAHAN WAJIB UNTUK SCHEDULER: Fungsi tarik riwayat perang
     async def get_war_log(self, clan_tag: str):
         if not clan_tag:
             logger.error("CLAN_TAG kosong di environment variable.")
@@ -93,7 +91,6 @@ class CoCClient:
                 logger.error(f"[CoC API Error WarLog] Status: {response.status} | URL: {url} | Detail: {error_text}")
                 return []
 
-    # FUNGSI BARU UNTUK TIER FREE: Data Clan War League (CWL)
     async def get_cwl_group(self, clan_tag: str):
         if not clan_tag:
             logger.error("CLAN_TAG kosong di environment variable.")
@@ -107,8 +104,25 @@ class CoCClient:
                     data = await response.json()
                     return data
                 elif response.status == 404:
-                    return None # Clan tidak sedang ikut CWL
+                    return None
                 
                 error_text = await response.text()
                 logger.error(f"[CoC API Error CWL] Status: {response.status} | URL: {url} | Detail: {error_text}")
+                return None
+
+    # FUNGSI WAJIB: Mengambil detail war spesifik dari tag ronde CWL
+    async def get_cwl_war(self, war_tag: str):
+        if not war_tag:
+            return None
+
+        # war_tag sudah dalam format khusus seperti #02894324 (perlu di-format ke %23)
+        url = f"{self.base_url}/clanwarleagues/wars/{self._format_tag(war_tag)}"
+        
+        async with aiohttp.ClientSession(headers=self._get_headers()) as session:
+            async with session.get(url) as response:
+                if response.status == 200:
+                    return await response.json()
+                
+                error_text = await response.text()
+                logger.error(f"[CoC API Error CWL War] Status: {response.status} | URL: {url} | Detail: {error_text}")
                 return None

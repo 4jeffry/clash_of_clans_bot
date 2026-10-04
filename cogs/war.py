@@ -30,27 +30,36 @@ class WarCommands(commands.Cog):
 
     async def _get_active_war(self, clan_tag: str):
         """Helper cerdas: Cek War Biasa dulu, kalau tidak ada baru fallback cek CWL Ronde Aktif"""
-        war_data = await self.coc.get_current_war(clan_tag)
-        if war_data and war_data.get('state') in ['inWar', 'preparation']:
-            return war_data, "REGULAR"
+        try:
+            war_data = await self.coc.get_current_war(clan_tag)
+            if war_data and isinstance(war_data, dict) and war_data.get('state') in ['inWar', 'preparation']:
+                return war_data, "REGULAR"
+        except Exception:
+            war_data = None
 
-        # Cek CWL Group jika War Biasa notInWar
-        cwl_group = await self.coc.get_cwl_group(clan_tag)
-        if cwl_group and cwl_group.get('state') != 'notInWar':
-            rounds = cwl_group.get('rounds', [])
-            for r in reversed(rounds):
-                war_tags = r.get('warTags', [])
-                for w_tag in war_tags:
-                    if w_tag == '#0': continue
-                    cwl_war = await self.coc.get_cwl_war(w_tag)
-                    if cwl_war and (cwl_war.get('clan', {}).get('tag') == clan_tag or cwl_war.get('opponent', {}).get('tag') == clan_tag):
-                        if cwl_war.get('state') in ['inWar', 'preparation']:
-                            # Sesuaikan posisi clan agar clan kita selalu di sebelah kiri
-                            if cwl_war.get('opponent', {}).get('tag') == clan_tag:
-                                cwl_war['clan'], cwl_war['opponent'] = cwl_war['opponent'], cwl_war['clan']
-                            return cwl_war, "CWL"
+        # Fallback Cek CWL Group
+        try:
+            cwl_group = await self.coc.get_cwl_group(clan_tag)
+            if cwl_group and isinstance(cwl_group, dict) and cwl_group.get('state') != 'notInWar':
+                rounds = cwl_group.get('rounds', [])
+                for r in reversed(rounds):
+                    war_tags = r.get('warTags', [])
+                    for w_tag in war_tags:
+                        if w_tag == '#0': continue
+                        
+                        cwl_war = await self.coc.get_cwl_war(w_tag)
+                        if cwl_war and isinstance(cwl_war, dict):
+                            clan_t = cwl_war.get('clan', {}).get('tag')
+                            opp_t = cwl_war.get('opponent', {}).get('tag')
+                            if clan_t == clan_tag or opp_t == clan_tag:
+                                if cwl_war.get('state') in ['inWar', 'preparation']:
+                                    if opp_t == clan_tag:
+                                        cwl_war['clan'], cwl_war['opponent'] = cwl_war['opponent'], cwl_war['clan']
+                                    return cwl_war, "CWL"
+        except Exception:
+            pass
 
-        return war_data, "REGULAR"
+        return None, "REGULAR"
 
     @app_commands.command(name="cwl", description="Cek status & grup Clan War League (CWL) saat ini")
     async def cwl_status(self, interaction: discord.Interaction):
@@ -60,7 +69,7 @@ class WarCommands(commands.Cog):
             return await interaction.followup.send("❌ Server ini belum di-setup!")
         
         cwl_data = await self.coc.get_cwl_group(clan_tag)
-        if not cwl_data or cwl_data.get('state') == 'notInWar':
+        if not cwl_data or not isinstance(cwl_data, dict) or cwl_data.get('state') == 'notInWar':
             return await interaction.followup.send("🛡️ Clan tidak sedang dalam masa Clan War League (CWL).")
         
         state = cwl_data.get('state', 'Unknown')
@@ -85,10 +94,10 @@ class WarCommands(commands.Cog):
             return await interaction.followup.send("❌ Server ini belum di-setup!")
         
         war_data, war_type = await self._get_active_war(clan_tag)
-        if not war_data or war_data.get('state') == 'notInWar':
-            return await interaction.followup.send("🛡️ Clan sedang tidak dalam perang aktif atau masa persiapan awal.")
+        if not war_data or not isinstance(war_data, dict) or war_data.get('state') == 'notInWar':
+            return await interaction.followup.send("🛡️ Clan sedang tidak dalam perang aktif atau masa persiapan awal (atau War Log diset Private).")
         
-        state = war_data.get('state', 'unknown').upper()
+        state = str(war_data.get('state', 'unknown')).upper()
         team_size = war_data.get('teamSize', 0)
         attacks_per_member = war_data.get('attacksPerMember', 1 if war_type == "CWL" else 2)
         total_possible_attacks = team_size * attacks_per_member
@@ -108,7 +117,6 @@ class WarCommands(commands.Cog):
         clan_attacks = clan.get('attacks', 0)
         opp_attacks = opponent.get('attacks', 0)
 
-        # Format Tampilan Monospace / Codeblock Box
         war_box = []
         war_box.append(f"⚔️ {clan_name[:14]} vs {opp_name[:14]}")
         war_box.append("──────────────────────────────────────────")
@@ -128,7 +136,7 @@ class WarCommands(commands.Cog):
             'WARENDED': discord.Color.dark_gray()
         }
 
-        title_prefix = "🏆 CWL ROUND STATUS" if war_type == "CWL" else "⚔️ WAR STATUS"
+        title_prefix = "🏆 CWL ROUND STATUS" if war_type == "CWL" else "⚔️️ WAR STATUS"
 
         embed = discord.Embed(
             title=f"{title_prefix}: {state}",
@@ -152,7 +160,7 @@ class WarCommands(commands.Cog):
             return await interaction.followup.send("❌ Server ini belum di-setup!")
 
         war_data, war_type = await self._get_active_war(clan_tag)
-        if not war_data or war_data.get('state') != 'inWar':
+        if not war_data or not isinstance(war_data, dict) or war_data.get('state') != 'inWar':
             return await interaction.followup.send("🛡️ Clan sedang tidak dalam masa perang aktif (inWar).")
 
         clan = war_data.get('clan', {})
