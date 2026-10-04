@@ -1,6 +1,8 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
+import csv
+import io
 from services.coc_client import CoCClient
 from services.db import get_db, check_standar_access
 from models import ServerConfig
@@ -18,7 +20,7 @@ class MemberCommands(commands.Cog):
         finally:
             db.close()
 
-    @app_commands.command(name="donations", description="Melihat Top 5 Donatur di Clan")
+    @app_commands.command(name="donations", description="Melihat Top Donatur & Unduh CSV Rekap Full Member")
     async def top_donations(self, interaction: discord.Interaction):
         await interaction.response.defer()
         clan_tag = self.get_clan_tag(interaction.guild_id)
@@ -30,16 +32,44 @@ class MemberCommands(commands.Cog):
             return await interaction.followup.send("❌ Gagal mengambil data member dari API.")
         
         members = clan_data['memberList']
-        top_donators = sorted(members, key=lambda x: x.get('donations', 0), reverse=True)[:5]
+        # Urutkan seluruh member berdasarkan donasi tertinggi
+        sorted_members = sorted(members, key=lambda x: x.get('donations', 0), reverse=True)
+        top_donators = sorted_members[:5]
         
-        embed = discord.Embed(title="🏆 Top 5 Donatur Clan", color=discord.Color.green())
-        for i, m in enumerate(top_donators, 1):
+        embed = discord.Embed(
+            title=f"🏆 Top 5 Donatur - {clan_data.get('name', 'Clan')}", 
+            description="Pahlawan donasi kita minggu ini! 🌟\n*Daftar lengkap seluruh member tersedia di file CSV terlampir.*",
+            color=discord.Color.brand_green()
+        )
+        
+        badges = ["🥇", "🥈", "🥉", "🏅", "🏅"]
+        for i, m in enumerate(top_donators):
+            don = m.get('donations', 0)
+            rec = m.get('donationsReceived', 0)
+            ratio = round(don / rec, 2) if rec > 0 else (don if don > 0 else 0)
+            
             embed.add_field(
-                name=f"{i}. {m.get('name')} (TH {m.get('townHallLevel')})", 
-                value=f"📤 Donasi: {m.get('donations', 0)} | 📥 Diterima: {m.get('donationsReceived', 0)}", 
+                name=f"{badges[i]} {m.get('name')} (TH {m.get('townHallLevel')})", 
+                value=f"**📤 Donasi:** `{don:,}` | **📥 Diterima:** `{rec:,}` | **⚖ Rasio:** `{ratio}`", 
                 inline=False
             )
-        await interaction.followup.send(embed=embed)
+
+        # Generate CSV in-memory
+        csv_buffer = io.StringIO()
+        writer = csv.writer(csv_buffer)
+        writer.writerow(["Rank", "Nama", "Tag", "Role", "TH", "Donasi", "Diterima", "Rasio"])
+        
+        for rank, m in enumerate(sorted_members, 1):
+            don = m.get('donations', 0)
+            rec = m.get('donationsReceived', 0)
+            ratio = round(don / rec, 2) if rec > 0 else (don if don > 0 else 0)
+            writer.writerow([rank, m.get('name'), m.get('tag'), m.get('role').capitalize(), m.get('townHallLevel'), don, rec, ratio])
+            
+        csv_buffer.seek(0)
+        csv_file = discord.File(fp=io.BytesIO(csv_buffer.getvalue().encode('utf-8')), filename=f"Rekap_Donasi_{clan_tag.replace('#', '')}.csv")
+
+        # Kirim Embed dan lampiran file CSV
+        await interaction.followup.send(embed=embed, file=csv_file)
 
     @app_commands.command(name="inactive", description="Cek member dengan donasi 0 atau terendah")
     async def check_inactive(self, interaction: discord.Interaction):
@@ -68,7 +98,6 @@ class MemberCommands(commands.Cog):
     async def member_stats(self, interaction: discord.Interaction, nama: str):
         await interaction.response.defer()
         
-        # 🔒 LOCK GUARD FOR TIER STANDAR
         has_access, err_msg = check_standar_access(interaction.guild_id)
         if not has_access:
             return await interaction.followup.send(err_msg)
@@ -99,7 +128,6 @@ class MemberCommands(commands.Cog):
     async def compare_members(self, interaction: discord.Interaction, member1: str, member2: str):
         await interaction.response.defer()
         
-        # 🔒 LOCK GUARD FOR TIER STANDAR
         has_access, err_msg = check_standar_access(interaction.guild_id)
         if not has_access:
             return await interaction.followup.send(err_msg)
@@ -129,7 +157,6 @@ class MemberCommands(commands.Cog):
     async def leaderboard(self, interaction: discord.Interaction):
         await interaction.response.defer()
         
-        # 🔒 LOCK GUARD FOR TIER STANDAR
         has_access, err_msg = check_standar_access(interaction.guild_id)
         if not has_access:
             return await interaction.followup.send(err_msg)
