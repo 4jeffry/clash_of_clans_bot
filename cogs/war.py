@@ -130,7 +130,6 @@ class WarCommands(commands.Cog):
             reverse=True
         )
 
-        # DESAIN LIST BERSUSUN: 100% AMAN DARI NAMA BERANTAKAN
         table_lines = []
         for rank, c in enumerate(sorted_standings, 1):
             name = c['name']
@@ -138,13 +137,12 @@ class WarCommands(commands.Cog):
             wins = c['wins']
             total_score = raw_stars + (wins * 10)
             
-            # Penanda jika ini adalah klan tempat bot dipasang
             marker = " *" if c['tag'] == clan_tag else ""
             
             # Baris 1: Nama Klan
             table_lines.append(f"{rank}. {name}{marker}")
-            # Baris 2: Indikator Angka (Dijamin rata)
-            table_lines.append(f"   └─ Bintang: {raw_stars:<3} | Win: {wins:<2} | Total: {total_score}")
+            # Baris 2: Indikator Angka (Diperpendek spasinya agar fit di HP)
+            table_lines.append(f"   └ Bintang:{raw_stars} | Win:{wins} | Tot:{total_score}")
 
         table_content = "```text\n" + "\n".join(table_lines) + "\n```"
 
