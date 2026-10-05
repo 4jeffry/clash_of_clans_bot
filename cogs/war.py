@@ -87,7 +87,6 @@ class WarCommands(commands.Cog):
         clans = cwl_data.get('clans', [])
         rounds = cwl_data.get('rounds', [])
 
-        # Inisialisasi struktur skor untuk 8 clan
         standings = {}
         for c in clans:
             c_tag = c.get('tag')
@@ -99,7 +98,6 @@ class WarCommands(commands.Cog):
                 'destruction': 0.0
             }
 
-        # Iterasi seluruh ronde untuk mengkalkulasi bintang & bonus menang (10 bintang per win)
         for r in rounds:
             war_tags = r.get('warTags', [])
             for w_tag in war_tags:
@@ -120,14 +118,12 @@ class WarCommands(commands.Cog):
                         standings[t2]['stars'] += s2
                         standings[t2]['destruction'] += d2
 
-                    # Bonus 10 bintang jika war sudah selesai dan ada pemenang
                     if cwl_war.get('state') == 'warEnded':
                         if s1 > s2 or (s1 == s2 and d1 > d2):
                             if t1 in standings: standings[t1]['wins'] += 1
                         elif s2 > s1 or (s1 == s2 and d2 > d1):
                             if t2 in standings: standings[t2]['wins'] += 1
 
-        # Urutkan berdasarkan: (Total Bintang + Bonus Win*10) -> Destruksi Total
         sorted_standings = sorted(
             standings.values(),
             key=lambda x: (x['stars'] + (x['wins'] * 10), x['destruction']),
@@ -135,31 +131,31 @@ class WarCommands(commands.Cog):
         )
 
         table_lines = []
-        table_lines.append("#  Nama Clan        Bintang  Win  Total")
-        table_lines.append("────────────────────────────────────────")
+        table_lines.append("#  Nama Clan     Bintang Win Total")
+        table_lines.append("─────────────────────────────────")
 
         for rank, c in enumerate(sorted_standings, 1):
             name = c['name']
-            if len(name) > 14:
-                name = name[:12] + ".."
+            # Potong nama maksimal 11 karakter agar tidak mendesak kolom angka di HP
+            if len(name) > 11:
+                name = name[:9] + ".."
             
             raw_stars = c['stars']
             wins = c['wins']
             total_score = raw_stars + (wins * 10)
             
-            # Highlight clan tempat bot ini dipasang
-            prefix = "⭐" if c['tag'] == clan_tag else "  "
-            line = f"{rank:<2}{prefix}{name:<14} {raw_stars:>5}  {wins:>3}  {total_score:>5}"
+            # Format nomor: kasih tanda * jika clan sendiri agar tetap rata
+            rank_str = f"{rank}*" if c['tag'] == clan_tag else f"{rank} "
+            
+            line = f"{rank_str:<2} {name:<12} {raw_stars:>5} {wins:>3} {total_score:>5}"
             table_lines.append(line)
 
         table_content = "```text\n" + "\n".join(table_lines) + "\n```"
 
         embed = discord.Embed(
-            title=f"🏆 KLASEMEN & PROYEKSI CWL ({season})",
-            description="*Bonus +10 Bintang otomatis ditambahkan untuk setiap kemenangan perang.*\n"
-                        "🟢 **Top 1-2:** Zona Promosi\n"
-                        "⚪ **Posisi 3-6:** Zona Aman\n"
-                        "🔴 **Posisi 7-8:** Zona Degradasi",
+            title=f"🏆 KLASEMEN CWL ({season})",
+            description="*Penanda `*` adalah posisi klan Anda.*\n"
+                        "🟢 **Top 1-2:** Promosi | ⚪ **3-6:** Aman | 🔴 **7-8:** Degradasi",
             color=discord.Color.purple()
         )
         embed.add_field(name="───────────", value=table_content, inline=False)
@@ -175,7 +171,7 @@ class WarCommands(commands.Cog):
         
         war_data, war_type = await self._get_active_war(clan_tag)
         if not war_data or not isinstance(war_data, dict) or war_data.get('state') == 'notInWar':
-            return await interaction.followup.send("🛡️ Clan sedang tidak dalam perang aktif atau masa persiapan awal (atau War Log diset Private).")
+            return await interaction.followup.send("🛡️️ Clan sedang tidak dalam perang aktif atau masa persiapan awal (atau War Log diset Private).")
         
         state = str(war_data.get('state', 'unknown')).upper()
         team_size = war_data.get('teamSize', 0)
@@ -241,7 +237,7 @@ class WarCommands(commands.Cog):
 
         war_data, war_type = await self._get_active_war(clan_tag)
         if not war_data or not isinstance(war_data, dict) or war_data.get('state') != 'inWar':
-            return await interaction.followup.send("🛡️ Clan sedang tidak dalam masa perang aktif (inWar).")
+            return await interaction.followup.send("🛡️️ Clan sedang tidak dalam masa perang aktif (inWar).")
 
         clan = war_data.get('clan', {})
         members = clan.get('members', [])
