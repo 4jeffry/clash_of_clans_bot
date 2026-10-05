@@ -42,10 +42,8 @@ class WarCommands(commands.Cog):
             cwl_group = await self.coc.get_cwl_group(clan_tag)
             if cwl_group and isinstance(cwl_group, dict) and cwl_group.get('state') != 'notInWar':
                 rounds = cwl_group.get('rounds', [])
+                prep_war = None
                 
-                prep_war = None # Penampung jika ada ronde yang preparation
-                
-                # Iterasi seluruh ronde CWL
                 for r in reversed(rounds):
                     war_tags = r.get('warTags', [])
                     for w_tag in war_tags:
@@ -57,19 +55,15 @@ class WarCommands(commands.Cog):
                             opp_t = cwl_war.get('opponent', {}).get('tag')
                             
                             if clan_t == clan_tag or opp_t == clan_tag:
-                                # Posisikan klan kita selalu di sebelah kiri (clan)
                                 if opp_t == clan_tag:
                                     cwl_war['clan'], cwl_war['opponent'] = cwl_war['opponent'], cwl_war['clan']
                                 
                                 state = cwl_war.get('state')
-                                # PRIORITAS UTAMA: Jika ada ronde yang lagi Battle Day (inWar), langsung return!
                                 if state == 'inWar':
                                     return cwl_war, "CWL"
-                                # Simpan dulu ronde preparation jika belum dapat yang inWar
                                 elif state == 'preparation' and not prep_war:
                                     prep_war = cwl_war
                 
-                # Jika tidak ada yang inWar, tampilkan ronde yang preparation
                 if prep_war:
                     return prep_war, "CWL"
 
@@ -78,7 +72,7 @@ class WarCommands(commands.Cog):
 
         return None, "REGULAR"
 
-    @app_commands.command(name="cwl", description="Cek status & grup Clan War League (CWL) saat ini")
+    @app_commands.command(name="cwl", description="Melihat Klasemen Pintar & Proyeksi Bintang CWL Grup Saat Ini")
     async def cwl_status(self, interaction: discord.Interaction):
         await interaction.response.defer()
         clan_tag = self.get_clan_tag(interaction.guild_id)
@@ -89,18 +83,87 @@ class WarCommands(commands.Cog):
         if not cwl_data or not isinstance(cwl_data, dict) or cwl_data.get('state') == 'notInWar':
             return await interaction.followup.send("🛡️ Clan tidak sedang dalam masa Clan War League (CWL).")
         
-        state = cwl_data.get('state', 'Unknown')
         season = cwl_data.get('season', 'Unknown')
         clans = cwl_data.get('clans', [])
-        
-        embed = discord.Embed(title=f"🏆 Clan War League: Musim {season}", color=discord.Color.purple())
-        embed.add_field(name="Status", value=f"`{state.capitalize()}`", inline=False)
-        
-        clan_names = [c.get('name') for c in clans]
-        if clan_names:
-            formatted_clans = "\n".join([f"{i}. {name}" for i, name in enumerate(clan_names, 1)])
-            embed.add_field(name="Grup CWL (8 Clan)", value=f"```text\n{formatted_clans}\n```", inline=False)
+        rounds = cwl_data.get('rounds', [])
+
+        # Inisialisasi struktur skor untuk 8 clan
+        standings = {}
+        for c in clans:
+            c_tag = c.get('tag')
+            standings[c_tag] = {
+                'name': c.get('name', 'Unknown'),
+                'tag': c_tag,
+                'stars': 0,
+                'wins': 0,
+                'destruction': 0.0
+            }
+
+        # Iterasi seluruh ronde untuk mengkalkulasi bintang & bonus menang (10 bintang per win)
+        for r in rounds:
+            war_tags = r.get('warTags', [])
+            for w_tag in war_tags:
+                if w_tag == '#0': continue
+                cwl_war = await self.coc.get_cwl_war(w_tag)
+                if cwl_war and isinstance(cwl_war, dict) and cwl_war.get('state') in ['inWar', 'warEnded']:
+                    c1 = cwl_war.get('clan', {})
+                    c2 = cwl_war.get('opponent', {})
+                    
+                    t1, t2 = c1.get('tag'), c2.get('tag')
+                    s1, s2 = c1.get('stars', 0), c2.get('stars', 0)
+                    d1, d2 = c1.get('destructionPercentage', 0.0), c2.get('destructionPercentage', 0.0)
+
+                    if t1 in standings:
+                        standings[t1]['stars'] += s1
+                        standings[t1]['destruction'] += d1
+                    if t2 in standings:
+                        standings[t2]['stars'] += s2
+                        standings[t2]['destruction'] += d2
+
+                    # Bonus 10 bintang jika war sudah selesai dan ada pemenang
+                    if cwl_war.get('state') == 'warEnded':
+                        if s1 > s2 or (s1 == s2 and d1 > d2):
+                            if t1 in standings: standings[t1]['wins'] += 1
+                        elif s2 > s1 or (s1 == s2 and d2 > d1):
+                            if t2 in standings: standings[t2]['wins'] += 1
+
+        # Urutkan berdasarkan: (Total Bintang + Bonus Win*10) -> Destruksi Total
+        sorted_standings = sorted(
+            standings.values(),
+            key=lambda x: (x['stars'] + (x['wins'] * 10), x['destruction']),
+            reverse=True
+        )
+
+        table_lines = []
+        table_lines.append("#  Nama Clan        Bintang  Win  Total")
+        table_lines.append("────────────────────────────────────────")
+
+        for rank, c in enumerate(sorted_standings, 1):
+            name = c['name']
+            if len(name) > 14:
+                name = name[:12] + ".."
             
+            raw_stars = c['stars']
+            wins = c['wins']
+            total_score = raw_stars + (wins * 10)
+            
+            # Highlight clan tempat bot ini dipasang
+            prefix = "⭐" if c['tag'] == clan_tag else "  "
+            line = f"{rank:<2}{prefix}{name:<14} {raw_stars:>5}  {wins:>3}  {total_score:>5}"
+            table_lines.append(line)
+
+        table_content = "```text\n" + "\n".join(table_lines) + "\n```"
+
+        embed = discord.Embed(
+            title=f"🏆 KLASEMEN & PROYEKSI CWL ({season})",
+            description="*Bonus +10 Bintang otomatis ditambahkan untuk setiap kemenangan perang.*\n"
+                        "🟢 **Top 1-2:** Zona Promosi\n"
+                        "⚪ **Posisi 3-6:** Zona Aman\n"
+                        "🔴 **Posisi 7-8:** Zona Degradasi",
+            color=discord.Color.purple()
+        )
+        embed.add_field(name="───────────", value=table_content, inline=False)
+        
         await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="warstatus", description="Melihat status Clan War / CWL saat ini")
