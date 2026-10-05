@@ -29,7 +29,7 @@ class WarCommands(commands.Cog):
             db.close()
 
     async def _get_active_war(self, clan_tag: str):
-        """Helper cerdas: Cek War Biasa dulu, kalau tidak ada baru fallback cek CWL Ronde Aktif"""
+        """Helper cerdas: Cek War Biasa dulu, kalau tidak ada baru fallback cek CWL (Prioritas inWar)"""
         try:
             war_data = await self.coc.get_current_war(clan_tag)
             if war_data and isinstance(war_data, dict) and war_data.get('state') in ['inWar', 'preparation']:
@@ -42,6 +42,10 @@ class WarCommands(commands.Cog):
             cwl_group = await self.coc.get_cwl_group(clan_tag)
             if cwl_group and isinstance(cwl_group, dict) and cwl_group.get('state') != 'notInWar':
                 rounds = cwl_group.get('rounds', [])
+                
+                prep_war = None # Penampung jika ada ronde yang preparation
+                
+                # Iterasi seluruh ronde CWL
                 for r in reversed(rounds):
                     war_tags = r.get('warTags', [])
                     for w_tag in war_tags:
@@ -51,11 +55,24 @@ class WarCommands(commands.Cog):
                         if cwl_war and isinstance(cwl_war, dict):
                             clan_t = cwl_war.get('clan', {}).get('tag')
                             opp_t = cwl_war.get('opponent', {}).get('tag')
+                            
                             if clan_t == clan_tag or opp_t == clan_tag:
-                                if cwl_war.get('state') in ['inWar', 'preparation']:
-                                    if opp_t == clan_tag:
-                                        cwl_war['clan'], cwl_war['opponent'] = cwl_war['opponent'], cwl_war['clan']
+                                # Posisikan klan kita selalu di sebelah kiri (clan)
+                                if opp_t == clan_tag:
+                                    cwl_war['clan'], cwl_war['opponent'] = cwl_war['opponent'], cwl_war['clan']
+                                
+                                state = cwl_war.get('state')
+                                # PRIORITAS UTAMA: Jika ada ronde yang lagi Battle Day (inWar), langsung return!
+                                if state == 'inWar':
                                     return cwl_war, "CWL"
+                                # Simpan dulu ronde preparation jika belum dapat yang inWar
+                                elif state == 'preparation' and not prep_war:
+                                    prep_war = cwl_war
+                
+                # Jika tidak ada yang inWar, tampilkan ronde yang preparation
+                if prep_war:
+                    return prep_war, "CWL"
+
         except Exception:
             pass
 
@@ -136,7 +153,7 @@ class WarCommands(commands.Cog):
             'WARENDED': discord.Color.dark_gray()
         }
 
-        title_prefix = "🏆 CWL ROUND STATUS" if war_type == "CWL" else "⚔️️ WAR STATUS"
+        title_prefix = "🏆 CWL ROUND STATUS" if war_type == "CWL" else "⚔️ WAR STATUS"
 
         embed = discord.Embed(
             title=f"{title_prefix}: {state}",
