@@ -1,34 +1,12 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
-import unicodedata
 from services.coc_client import CoCClient
 from services.db import get_db, check_standar_access
 from models import ServerConfig
 
-def get_display_width(text: str) -> int:
-    """Menghitung lebar visual asli teks (karakter CJK/Jepang dihitung lebar 2)"""
-    width = 0
-    for char in text:
-        if unicodedata.east_asian_width(char) in ['F', 'W']:
-            width += 2
-        else:
-            width += 1
-    return width
-
-def truncate_to_width(text: str, max_width: int) -> str:
-    """Memotong teks berdasarkan lebar visual agar tidak merusak tabel"""
-    current_width = 0
-    result = []
-    for char in text:
-        w = 2 if unicodedata.east_asian_width(char) in ['F', 'W'] else 1
-        if current_width + w > max_width:
-            break
-        result.append(char)
-        current_width += w
-    return "".join(result)
-
 def create_progress_bar(percentage: float, length: int = 12) -> str:
+    """Helper untuk membuat visual progress bar teks"""
     try:
         percentage = float(percentage)
     except (ValueError, TypeError):
@@ -51,6 +29,7 @@ class WarCommands(commands.Cog):
             db.close()
 
     async def _get_active_war(self, clan_tag: str):
+        """Helper cerdas: Cek War Biasa dulu, kalau tidak ada baru fallback cek CWL (Prioritas inWar)"""
         try:
             war_data = await self.coc.get_current_war(clan_tag)
             if war_data and isinstance(war_data, dict) and war_data.get('state') in ['inWar', 'preparation']:
@@ -58,6 +37,7 @@ class WarCommands(commands.Cog):
         except Exception:
             war_data = None
 
+        # Fallback Cek CWL Group
         try:
             cwl_group = await self.coc.get_cwl_group(clan_tag)
             if cwl_group and isinstance(cwl_group, dict) and cwl_group.get('state') != 'notInWar':
@@ -150,37 +130,27 @@ class WarCommands(commands.Cog):
             reverse=True
         )
 
+        # DESAIN LIST BERSUSUN: 100% AMAN DARI NAMA BERANTAKAN
         table_lines = []
-        table_lines.append("#  Nama Clan        Bintang Win Total")
-        table_lines.append("─────────────────────────────────")
-
-        TARGET_WIDTH = 14  # Lebar kolom nama klan
-
         for rank, c in enumerate(sorted_standings, 1):
-            raw_name = c['name']
-            
-            # Potong nama jika lebarnya melebihi 14 unit visual
-            if get_display_width(raw_name) > TARGET_WIDTH:
-                name = truncate_to_width(raw_name, TARGET_WIDTH - 2) + ".."
-            else:
-                name = raw_name
-                
-            # Tambahkan spasi pengisi (padding) secara akurat sesuai lebar visual
-            pad_spaces = " " * (TARGET_WIDTH - get_display_width(name))
-            padded_name = name + pad_spaces
-
+            name = c['name']
             raw_stars = c['stars']
             wins = c['wins']
             total_score = raw_stars + (wins * 10)
             
-            line = f"{rank:<2} {padded_name} {raw_stars:>5} {wins:>3} {total_score:>5}"
-            table_lines.append(line)
+            # Penanda jika ini adalah klan tempat bot dipasang
+            marker = " *" if c['tag'] == clan_tag else ""
+            
+            # Baris 1: Nama Klan
+            table_lines.append(f"{rank}. {name}{marker}")
+            # Baris 2: Indikator Angka (Dijamin rata)
+            table_lines.append(f"   └─ Bintang: {raw_stars:<3} | Win: {wins:<2} | Total: {total_score}")
 
         table_content = "```text\n" + "\n".join(table_lines) + "\n```"
 
         embed = discord.Embed(
             title=f"🏆 KLASEMEN CWL ({season})",
-            description="🟢 **Top 1-2:** Promosi | ⚪ **3-6:** Aman | 🔴 **7-8:** Degradasi",
+            description="🟢 **Top 1-2:** Promosi | ⚪ **3-6:** Aman | 🔴 **7-8:** Degradasi\n*(Penanda `*` adalah klan Anda)*",
             color=discord.Color.purple()
         )
         embed.add_field(name="───────────", value=table_content, inline=False)
