@@ -7,85 +7,6 @@ from models import ServerConfig, CWLSeason, RaceReward, War, WarAttack
 from sqlalchemy import text, func
 from datetime import datetime
 
-class MultiRewardSelect(discord.ui.Select):
-    def __init__(self, top_members, scope_type):
-        self.top_members = {m['tag']: m for m in top_members}
-        options = []
-        for m in top_members[:25]: # Batas limit dropdown discord max 25 opsi
-            options.append(
-                discord.SelectOption(
-                    label=m['name'][:25], 
-                    value=m['tag'], 
-                    description=f"Skor: {int(m['stars'])}⭐ | Destruksi: {m['dest']:.1f}%"
-                )
-            )
-        super().__init__(placeholder="Pilih beberapa kandidat penerima bonus...", min_values=1, max_values=len(options), options=options)
-
-    async def callback(self, interaction: discord.Interaction):
-        # Kirim modal untuk memasukkan catatan kustom untuk para member yang dipilih
-        selected_tags = self.values
-        selected_names = [self.top_members[tag]['name'] for tag in selected_tags if tag in self.top_members]
-        await interaction.response.send_modal(MultiRewardNoteModal(player_tags=selected_tags, player_names=selected_names, scope_type=self.scope_type))
-
-class MultiRewardView(discord.ui.View):
-    def __init__(self, top_members, scope_type):
-        super().__init__(timeout=120)
-        self.add_item(MultiRewardSelect(top_members, scope_type))
-
-class MultiRewardNoteModal(discord.ui.Modal, title="Catatan Bonus / Reward Member"):
-    keterangan = discord.ui.TextInput(
-        label="Catatan Reward (Misal: Medali CWL + Gold Pass)",
-        style=discord.TextStyle.paragraph,
-        placeholder="Contoh: Medali CWL + Gold Pass karena performa MVP!",
-        required=True,
-        max_length=300
-    )
-
-    def __init__(self, player_tags: list, player_names: list, scope_type: str):
-        super().__init__()
-        self.player_tags = player_tags
-        self.player_names = player_names
-        self.scope_type = scope_type
-
-    async def on_submit(self, interaction: discord.Interaction):
-        db = get_db()
-        try:
-            config = db.query(ServerConfig).filter(ServerConfig.guild_id == str(interaction.guild_id)).first()
-            clan_tag = config.clan_tag if config else None
-            
-            scope_id = 0
-            if clan_tag:
-                if self.scope_type == 'cwl':
-                    current_month = datetime.now().strftime('%Y-%m')
-                    cwl = db.query(CWLSeason).filter(CWLSeason.clan_tag == clan_tag, CWLSeason.month == current_month).first()
-                    if cwl: scope_id = cwl.id
-                else:
-                    w = db.query(War).filter(War.clan_tag == clan_tag, War.is_cwl == False).order_by(War.id.desc()).first()
-                    if w: scope_id = w.id
-
-            # Masukkan ke database untuk setiap player yang dipilih sekaligus
-            for tag in self.player_tags:
-                reward = RaceReward(
-                    scope_type=self.scope_type,
-                    scope_id=scope_id,
-                    player_tag=tag,
-                    reward_note=f"[{interaction.user.name}] {self.keterangan.value}"
-                )
-                db.add(reward)
-            db.commit()
-
-            names_str = ", ".join(self.player_names)
-            await interaction.response.send_message(
-                f"✅ Berhasil mencatat reward untuk **{len(self.player_tags)} member** (`{names_str}`)!\n📝 **Catatan:** {self.keterangan.value}",
-                ephemeral=True
-            )
-        except Exception as e:
-            db.rollback()
-            await interaction.followup.send(f"❌ Gagal menyimpan reward: {e}", ephemeral=True)
-        finally:
-            db.close()
-
-
 class RaceCommands(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -243,17 +164,23 @@ class RaceCommands(commands.Cog):
         finally:
             db.close()
 
-    @app_commands.command(name="givereward", description="[STANDAR] Tandai pemberian reward untuk member berdasarkan rekap")
+    @app_commands.command(name="givereward", description="[STANDAR] Berikan reward/bonus ke member berdasarkan nama")
+    @app_commands.describe(
+        scope="Pilih kategori (war atau cwl)",
+        nama_member="Nama member sesuai di game (bisa sebagian nama)",
+        catatan="Catatan reward (Contoh: Medali CWL + Gold Pass)"
+    )
     @app_commands.choices(scope=[
-        app_commands.Choice(name="War Classic (Rekap 30 Hari)", value="war"),
-        app_commands.Choice(name="CWL Musim Ini (Semua Round)", value="cwl")
+        app_commands.Choice(name="War Classic", value="war"),
+        app_commands.Choice(name="CWL Musim Ini", value="cwl")
     ])
     async def give_reward(
         self, 
         interaction: discord.Interaction, 
-        scope: app_commands.Choice[str]
+        scope: app_commands.Choice[str],
+        nama_member: str,
+        catatan: str
     ):
-        # Hindari timeout Discord dengan ephemeral defer yang aman
         await interaction.response.defer(ephemeral=True)
         
         has_access, err_msg = check_standar_access(interaction.guild_id)
@@ -265,64 +192,50 @@ class RaceCommands(commands.Cog):
             return await interaction.followup.send("❌ Server belum di-setup!", ephemeral=True)
 
         scope_type = scope.value
-        top_members = []
+        
+        # Ambil data member langsung dari API Clan CoC untuk mencocokkan nama dan mendapatkan player tag yang valid
+        clan_data = await self.coc.get_clan_info(clan_tag)
+        if not clan_data or 'memberList' not in clan_data:
+            return await interaction.followup.send("❌ Gagal mengambil data clan dari API.", ephemeral=True)
 
-        if scope_type == "cwl":
-            cwl_data = await self.coc.get_cwl_group(clan_tag)
-            if not cwl_data or cwl_data.get('state') == 'notInWar':
-                return await interaction.followup.send("🛡️ Clan tidak sedang dalam masa CWL.", ephemeral=True)
-                
-            players = {}
-            for r in cwl_data.get('rounds', []):
-                for w_tag in r.get('warTags', []):
-                    if w_tag == '#0': continue
-                    cwl_war = await self.coc.get_cwl_war(w_tag)
-                    if cwl_war and cwl_war.get('state') in ['inWar', 'warEnded']:
-                        our_clan = None
-                        if cwl_war.get('clan', {}).get('tag') == clan_tag:
-                            our_clan = cwl_war.get('clan')
-                        elif cwl_war.get('opponent', {}).get('tag') == clan_tag:
-                            our_clan = cwl_war.get('opponent')
-                        
-                        if our_clan:
-                            for member in our_clan.get('members', []):
-                                m_tag = member.get('tag')
-                                if m_tag not in players:
-                                    players[m_tag] = {'name': member.get('name', 'Unknown'), 'tag': m_tag, 'stars': 0, 'dest': 0.0}
-                                for atk in member.get('attacks', []):
-                                    players[m_tag]['stars'] += atk.get('stars', 0)
-                                    players[m_tag]['dest'] += atk.get('destructionPercentage', 0.0)
-            
-            # Ambil top member secara keseluruhan untuk dipilih leader (misal top 20 besar)
-            top_members = sorted(players.values(), key=lambda x: (x['stars'], x['dest']), reverse=True)[:20]
-        else:
-            db = get_db()
-            try:
-                latest_war = db.query(War).filter(War.clan_tag == clan_tag, War.is_cwl == False).order_by(War.id.desc()).first()
-                if latest_war:
-                    top = db.query(
-                        WarAttack.attacker_name,
-                        WarAttack.attacker_tag,
-                        func.sum(WarAttack.stars).label('stars'),
-                        func.sum(WarAttack.destruction_percentage).label('dest')
-                    ).filter(WarAttack.war_id == latest_war.id)\
-                     .group_by(WarAttack.attacker_name, WarAttack.attacker_tag)\
-                     .order_by(func.sum(WarAttack.stars).desc(), func.sum(WarAttack.destruction_percentage).desc())\
-                     .limit(20).all()
-                    
-                    top_members = [{'name': m.attacker_name, 'tag': m.attacker_tag, 'stars': m.stars, 'dest': m.dest} for m in top]
-            finally:
-                db.close()
+        members = clan_data['memberList']
+        target = next((m for m in members if nama_member.lower() in m.get('name', '').lower()), None)
+        
+        if not target:
+            return await interaction.followup.send(f"❌ Member dengan nama mengandung `{nama_member}` tidak ditemukan di clan.", ephemeral=True)
 
-        if not top_members:
-            return await interaction.followup.send(f"❌ Belum ada data rekap untuk **{scope.name}**.", ephemeral=True)
+        player_tag = target.get('tag')
+        player_name = target.get('name')
 
-        view = MultiRewardView(top_members=top_members, scope_type=scope_type)
-        await interaction.followup.send(
-            f"🎁 **Pilih Kandidat Penerima Bonus** dari rekap **{scope.name}**:\n*(Kamu bisa memilih **lebih dari satu orang** sekaligus, lalu isi catatan reward di form berikutnya)*",
-            view=view,
-            ephemeral=True
-        )
+        db = get_db()
+        try:
+            scope_id = 0
+            if scope_type == 'cwl':
+                current_month = datetime.now().strftime('%Y-%m')
+                cwl = db.query(CWLSeason).filter(CWLSeason.clan_tag == clan_tag, CWLSeason.month == current_month).first()
+                if cwl: scope_id = cwl.id
+            else:
+                w = db.query(War).filter(War.clan_tag == clan_tag, War.is_cwl == False).order_by(War.id.desc()).first()
+                if w: scope_id = w.id
+
+            reward = RaceReward(
+                scope_type=scope_type,
+                scope_id=scope_id,
+                player_tag=player_tag,
+                reward_note=f"[{interaction.user.name}] {catatan}"
+            )
+            db.add(reward)
+            db.commit()
+
+            await interaction.followup.send(
+                f"✅ Berhasil mencatat reward untuk **{player_name}** (`{player_tag}`)!\n📝 **Catatan:** {catatan}",
+                ephemeral=True
+            )
+        except Exception as e:
+            db.rollback()
+            await interaction.followup.send(f"❌ Gagal menyimpan reward ke database: {e}", ephemeral=True)
+        finally:
+            db.close()
 
     @app_commands.command(name="rewardhistory", description="[STANDAR] Lihat riwayat pemberian reward ke member")
     async def reward_history(self, interaction: discord.Interaction):
@@ -339,11 +252,8 @@ class RaceCommands(commands.Cog):
         db = get_db()
         try:
             query_history = text("""
-                SELECT rr.scope_type, rr.reward_note, rr.claimed_at, wa.attacker_name
+                SELECT rr.scope_type, rr.reward_note, rr.claimed_at, rr.player_tag
                 FROM race_rewards rr
-                LEFT JOIN (
-                    SELECT DISTINCT attacker_tag, attacker_name FROM war_attacks
-                ) wa ON rr.player_tag = wa.attacker_tag
                 ORDER BY rr.id DESC LIMIT 10
             """)
             history = db.execute(query_history).mappings().all()
@@ -354,10 +264,9 @@ class RaceCommands(commands.Cog):
                 embed.description = "Belum ada riwayat reward yang dicatat."
             else:
                 for h in history:
-                    name = h['attacker_name'] or "Member"
-                    date_str = h['claimed_at'].strftime("%d %b %Y")
+                    date_str = h['claimed_at'].strftime("%d %b %Y") if h['claimed_at'] else "-"
                     embed.add_field(
-                        name=f"🎁 {name} ({h['scope_type'].upper()})",
+                        name=f"🎁 Tag: {h['player_tag']} ({h['scope_type'].upper()})",
                         value=f"• Catatan: {h['reward_note']}\n• Tanggal: {date_str}",
                         inline=False
                     )
