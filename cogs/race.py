@@ -7,13 +7,11 @@ from models import ServerConfig, CWLSeason, RaceReward, War, WarAttack
 from sqlalchemy import text, func
 from datetime import datetime
 
-class RewardSelectView(discord.ui.View):
-    def __init__(self, top_members, scope_type="war"):
-        super().__init__(timeout=60)
-        self.scope_type = scope_type
-        
+class MultiRewardSelect(discord.ui.Select):
+    def __init__(self, top_members, scope_type):
+        self.top_members = {m['tag']: m for m in top_members}
         options = []
-        for m in top_members:
+        for m in top_members[:25]: # Batas limit dropdown discord max 25 opsi
             options.append(
                 discord.SelectOption(
                     label=m['name'][:25], 
@@ -21,28 +19,32 @@ class RewardSelectView(discord.ui.View):
                     description=f"Skor: {int(m['stars'])}⭐ | Destruksi: {m['dest']:.1f}%"
                 )
             )
-        self.add_item(RewardSelect(options, scope_type))
-
-class RewardSelect(discord.ui.Select):
-    def __init__(self, options, scope_type):
-        super().__init__(placeholder="Pilih kandidat prioritas peraih bonus...", min_values=1, max_values=1, options=options)
-        self.scope_type = scope_type
+        super().__init__(placeholder="Pilih beberapa kandidat penerima bonus...", min_values=1, max_values=len(options), options=options)
 
     async def callback(self, interaction: discord.Interaction):
-        await interaction.response.send_modal(RewardNoteModal(player_tag=self.values[0], scope_type=self.scope_type))
+        # Kirim modal untuk memasukkan catatan kustom untuk para member yang dipilih
+        selected_tags = self.values
+        selected_names = [self.top_members[tag]['name'] for tag in selected_tags if tag in self.top_members]
+        await interaction.response.send_modal(MultiRewardNoteModal(player_tags=selected_tags, player_names=selected_names, scope_type=self.scope_type))
 
-class RewardNoteModal(discord.ui.Modal, title="Form Catatan Apresiasi Member"):
+class MultiRewardView(discord.ui.View):
+    def __init__(self, top_members, scope_type):
+        super().__init__(timeout=120)
+        self.add_item(MultiRewardSelect(top_members, scope_type))
+
+class MultiRewardNoteModal(discord.ui.Modal, title="Catatan Bonus / Reward Member"):
     keterangan = discord.ui.TextInput(
-        label="Keterangan / Alasan Reward",
+        label="Catatan Reward (Misal: Medali CWL + Gold Pass)",
         style=discord.TextStyle.paragraph,
-        placeholder="Contoh: MVP Rekap bulan ini karena konsisten sumbang bintang tertinggi!",
+        placeholder="Contoh: Medali CWL + Gold Pass karena performa MVP!",
         required=True,
         max_length=300
     )
 
-    def __init__(self, player_tag: str, scope_type: str = "war"):
+    def __init__(self, player_tags: list, player_names: list, scope_type: str):
         super().__init__()
-        self.player_tag = player_tag
+        self.player_tags = player_tags
+        self.player_names = player_names
         self.scope_type = scope_type
 
     async def on_submit(self, interaction: discord.Interaction):
@@ -61,17 +63,20 @@ class RewardNoteModal(discord.ui.Modal, title="Form Catatan Apresiasi Member"):
                     w = db.query(War).filter(War.clan_tag == clan_tag, War.is_cwl == False).order_by(War.id.desc()).first()
                     if w: scope_id = w.id
 
-            reward = RaceReward(
-                scope_type=self.scope_type,
-                scope_id=scope_id,
-                player_tag=self.player_tag,
-                reward_note=f"[{interaction.user.name}] {self.keterangan.value}"
-            )
-            db.add(reward)
+            # Masukkan ke database untuk setiap player yang dipilih sekaligus
+            for tag in self.player_tags:
+                reward = RaceReward(
+                    scope_type=self.scope_type,
+                    scope_id=scope_id,
+                    player_tag=tag,
+                    reward_note=f"[{interaction.user.name}] {self.keterangan.value}"
+                )
+                db.add(reward)
             db.commit()
 
+            names_str = ", ".join(self.player_names)
             await interaction.response.send_message(
-                f"✅ Berhasil mencatat apresiasi untuk tag `{self.player_tag}` ({self.scope_type.upper()})!\n📝 **Nota:** {self.keterangan.value}",
+                f"✅ Berhasil mencatat reward untuk **{len(self.player_tags)} member** (`{names_str}`)!\n📝 **Catatan:** {self.keterangan.value}",
                 ephemeral=True
             )
         except Exception as e:
@@ -248,7 +253,7 @@ class RaceCommands(commands.Cog):
         interaction: discord.Interaction, 
         scope: app_commands.Choice[str]
     ):
-        # Karena kita melakukan kalkulasi API yang butuh waktu, pakai ephemeral defer
+        # Hindari timeout Discord dengan ephemeral defer yang aman
         await interaction.response.defer(ephemeral=True)
         
         has_access, err_msg = check_standar_access(interaction.guild_id)
@@ -263,9 +268,6 @@ class RaceCommands(commands.Cog):
         top_members = []
 
         if scope_type == "cwl":
-            # ==========================================
-            # LIVE API FETCH KHUSUS CWL (BYPASS DATABASE)
-            # ==========================================
             cwl_data = await self.coc.get_cwl_group(clan_tag)
             if not cwl_data or cwl_data.get('state') == 'notInWar':
                 return await interaction.followup.send("🛡️ Clan tidak sedang dalam masa CWL.", ephemeral=True)
@@ -291,12 +293,9 @@ class RaceCommands(commands.Cog):
                                     players[m_tag]['stars'] += atk.get('stars', 0)
                                     players[m_tag]['dest'] += atk.get('destructionPercentage', 0.0)
             
-            # Sortir by Bintang Tertinggi -> Destruksi Tertinggi
-            top_members = sorted(players.values(), key=lambda x: (x['stars'], x['dest']), reverse=True)[:5]
+            # Ambil top member secara keseluruhan untuk dipilih leader (misal top 20 besar)
+            top_members = sorted(players.values(), key=lambda x: (x['stars'], x['dest']), reverse=True)[:20]
         else:
-            # ==========================================
-            # DATABASE FETCH KHUSUS WAR CLASSIC
-            # ==========================================
             db = get_db()
             try:
                 latest_war = db.query(War).filter(War.clan_tag == clan_tag, War.is_cwl == False).order_by(War.id.desc()).first()
@@ -309,7 +308,7 @@ class RaceCommands(commands.Cog):
                     ).filter(WarAttack.war_id == latest_war.id)\
                      .group_by(WarAttack.attacker_name, WarAttack.attacker_tag)\
                      .order_by(func.sum(WarAttack.stars).desc(), func.sum(WarAttack.destruction_percentage).desc())\
-                     .limit(5).all()
+                     .limit(20).all()
                     
                     top_members = [{'name': m.attacker_name, 'tag': m.attacker_tag, 'stars': m.stars, 'dest': m.dest} for m in top]
             finally:
@@ -318,9 +317,9 @@ class RaceCommands(commands.Cog):
         if not top_members:
             return await interaction.followup.send(f"❌ Belum ada data rekap untuk **{scope.name}**.", ephemeral=True)
 
-        view = RewardSelectView(top_members=top_members, scope_type=scope_type)
+        view = MultiRewardView(top_members=top_members, scope_type=scope_type)
         await interaction.followup.send(
-            f"🎁 **Pilih Kandidat Prioritas Bonus** dari rekap **{scope.name}**:\n*Kandidat otomatis diurutkan berdasarkan perolehan Stars tertinggi, lalu Total Destruksi jika Stars seri.*",
+            f"🎁 **Pilih Kandidat Penerima Bonus** dari rekap **{scope.name}**:\n*(Kamu bisa memilih **lebih dari satu orang** sekaligus, lalu isi catatan reward di form berikutnya)*",
             view=view,
             ephemeral=True
         )
