@@ -89,10 +89,10 @@ class RaceCommands(commands.Cog):
         finally:
             db.close()
 
-    @app_commands.command(name="racecwl", description="[STANDAR] Ranking Offense & Defense CWL musim berjalan")
+    @app_commands.command(name="racecwl", description="[STANDAR] Live Ranking & Kandidat Bonus CWL Terbaik Saat Ini")
     async def race_cwl(self, interaction: discord.Interaction):
         await interaction.response.defer()
-        
+
         has_access, err_msg = check_standar_access(interaction.guild_id)
         if not has_access:
             return await interaction.followup.send(err_msg)
@@ -101,74 +101,81 @@ class RaceCommands(commands.Cog):
         if not clan_tag:
             return await interaction.followup.send("❌ Server belum di-setup!")
 
-        current_month = datetime.now().strftime('%Y-%m')
-        db = get_db()
-        try:
-            cwl = db.query(CWLSeason).filter(
-                CWLSeason.clan_tag == clan_tag,
-                CWLSeason.month == current_month
-            ).first()
+        # Tarik data live grup CWL langsung dari API Clash of Clans
+        cwl_data = await self.coc.get_cwl_group(clan_tag)
+        if not cwl_data or not isinstance(cwl_data, dict) or cwl_data.get('state') == 'notInWar':
+            return await interaction.followup.send("🛡️ Clan tidak sedang dalam masa Clan War League (CWL).")
 
-            if not cwl:
-                return await interaction.followup.send(f"🛡️ Belum ada data CWL tersimpan untuk musim **{current_month}**.")
+        season = cwl_data.get('season', 'Unknown')
+        rounds = cwl_data.get('rounds', [])
 
-            query_cwl_rank = text("""
-                WITH Offense AS (
-                    SELECT wa.attacker_tag as tag, wa.attacker_name as name, SUM(wa.stars) as atk_stars, COUNT(wa.id) as atk_count
-                    FROM war_attacks wa
-                    JOIN wars w ON wa.war_id = w.id
-                    WHERE w.cwl_season_id = :season_id
-                    GROUP BY wa.attacker_tag, wa.attacker_name
-                ),
-                Defense AS (
-                    SELECT wa.defender_tag as tag, SUM(wa.stars) as total_def_stars_given, AVG(wa.destruction_percentage) as avg_def_dest
-                    FROM war_attacks wa
-                    JOIN wars w ON wa.war_id = w.id
-                    WHERE w.cwl_season_id = :season_id
-                    GROUP BY wa.defender_tag
-                )
-                SELECT o.tag, o.name, o.atk_stars, o.atk_count, 
-                       COALESCE(d.total_def_stars_given, 0) as def_stars, 
-                       COALESCE(d.avg_def_dest, 0) as def_dest
-                FROM Offense o
-                LEFT JOIN Defense d ON o.tag = d.tag
-                ORDER BY o.atk_stars DESC, def_stars ASC, o.atk_count ASC
-            """)
-            rankings = db.execute(query_cwl_rank, {"season_id": cwl.id}).mappings().all()
+        players = {}
+        active_rounds = 0
 
-            rewards = db.query(RaceReward).filter(
-                RaceReward.scope_type == 'cwl',
-                RaceReward.scope_id == cwl.id
-            ).all()
-            rewarded_tags = [r.player_tag for r in rewards]
+        for r in rounds:
+            war_tags = r.get('warTags', [])
+            round_counted = False
+            for w_tag in war_tags:
+                if w_tag == '#0': continue
+                cwl_war = await self.coc.get_cwl_war(w_tag)
+                
+                # Ambil data dari ronde yang sedang berjalan atau sudah selesai
+                if cwl_war and isinstance(cwl_war, dict) and cwl_war.get('state') in ['inWar', 'warEnded']:
+                    our_clan = None
+                    if cwl_war.get('clan', {}).get('tag') == clan_tag:
+                        our_clan = cwl_war.get('clan')
+                    elif cwl_war.get('opponent', {}).get('tag') == clan_tag:
+                        our_clan = cwl_war.get('opponent')
+                        
+                    if our_clan:
+                        round_counted = True
+                        for member in our_clan.get('members', []):
+                            m_tag = member.get('tag')
+                            m_name = member.get('name', 'Unknown')
+                            
+                            if m_tag not in players:
+                                players[m_tag] = {'name': m_name, 'tag': m_tag, 'stars': 0, 'dest': 0.0, 'attacks': 0}
+                            
+                            for atk in member.get('attacks', []):
+                                players[m_tag]['stars'] += atk.get('stars', 0)
+                                players[m_tag]['dest'] += atk.get('destructionPercentage', 0.0)
+                                players[m_tag]['attacks'] += 1
+                                
+            if round_counted:
+                active_rounds += 1
 
-            embed = discord.Embed(
-                title=f"🏆 CWL Season Race — Musim {current_month}",
-                description="Akumulasi Performa (Serangan & Pertahanan) bulan ini:",
-                color=discord.Color.purple()
-            )
+        if not players:
+            return await interaction.followup.send("❌ Belum ada data serangan CWL yang tercatat di API untuk musim ini.")
 
-            if not rankings:
-                embed.description += "\n\n*Belum ada data serangan tercatat.*"
-            else:
-                leaderboard_text = ""
-                for i, r in enumerate(rankings[:15], 1):
-                    badge = "🎁 " if r['tag'] in rewarded_tags else ""
-                    avg_dest = round(r['def_dest'], 1)
-                    def_status = f"🛡️ -{r['def_stars']}⭐ ({avg_dest}%)" if r['def_stars'] > 0 else "🛡️ Tembok Beton"
-                    leaderboard_text += f"{i}. {badge}**{r['name']}**\n└ ⚔️ {r['atk_stars']} Stars ({r['atk_count']} Atk) | {def_status}\n"
-                embed.add_field(name="📊 Klasemen Akumulasi CWL", value=leaderboard_text, inline=False)
+        # Urutkan berdasarkan: 1. Bintang Tertinggi, 2. Total Destruksi Tertinggi
+        sorted_players = sorted(
+            players.values(),
+            key=lambda x: (x['stars'], x['dest']),
+            reverse=True
+        )
 
-            embed.set_footer(text="ixiera.id — Operating System Studio | WA: https://wa.me/6285736048626")
-            await interaction.followup.send(embed=embed)
-        finally:
-            db.close()
+        embed = discord.Embed(
+            title=f"🏆 Live Kandidat Bonus CWL ({season})",
+            description=f"Status Ronde: **Round Berjalan {active_rounds}/{len(rounds)}**\n*Diurutkan otomatis dari Bintang terbanyak & Destruksi tertinggi (Referensi Utama Peraih Medali Bonus).*",
+            color=discord.Color.purple()
+        )
 
-    @app_commands.command(name="givereward", description="[STANDAR] Lihat 10 kandidat teratas CWL & catat reward member")
+        leaderboard_text = ""
+        # Tampilkan Top 10 Kandidat Terbaik
+        for i, p in enumerate(sorted_players[:10], 1):
+            badge = "🎁 " if i <= 8 else "" # Anggap slot bonus standar sekitar 8 orang (bisa disesuaikan)
+            leaderboard_text += f"{i}. {badge}**{p['name']}**\n└ ⚔️ Atk: {p['attacks']} | ⭐ Bintang: {p['stars']} |  destrucción: {p['dest']:.1f}%\n"
+
+        embed.add_field(name="📊 Top 10 Performa Member", value=leaderboard_text if leaderboard_text else "Belum ada data.", inline=False)
+        embed.set_footer(text="ixiera.id — Operating System Studio | WA: https://wa.me/6285736048626")
+        
+        await interaction.followup.send(embed=embed)
+
+    @app_commands.command(name="givereward", description="[STANDAR] Catat reward/bonus ke member tertentu")
     @app_commands.describe(
         scope="Pilih kategori (War Classic atau CWL Musim Ini)",
-        nama_member="Nama member yang ingin diberi reward",
-        catatan="Catatan reward (Contoh: Medali CWL + Gold Pass)"
+        nama_member="Nama member sesuai di game",
+        catatan="Catatan (Contoh: Medali CWL + Gold Pass)"
     )
     @app_commands.choices(scope=[
         app_commands.Choice(name="War Classic", value="war"),
@@ -192,41 +199,7 @@ class RaceCommands(commands.Cog):
             return await interaction.followup.send("❌ Server belum di-setup!", ephemeral=True)
 
         scope_type = scope.value
-
-        # Jika CWL, tarik data live round untuk menampilkan 10 kandidat teratas sebagai referensi Leader
-        preview_text = ""
-        if scope_type == "cwl":
-            cwl_data = await self.coc.get_cwl_group(clan_tag)
-            if cwl_data and cwl_data.get('state') != 'notInWar':
-                players = {}
-                for r in cwl_data.get('rounds', []):
-                    for w_tag in r.get('warTags', []):
-                        if w_tag == '#0': continue
-                        cwl_war = await self.coc.get_cwl_war(w_tag)
-                        if cwl_war and cwl_war.get('state') in ['inWar', 'warEnded']:
-                            our_clan = None
-                            if cwl_war.get('clan', {}).get('tag') == clan_tag:
-                                our_clan = cwl_war.get('clan')
-                            elif cwl_war.get('opponent', {}).get('tag') == clan_tag:
-                                our_clan = cwl_war.get('opponent')
-                            
-                            if our_clan:
-                                for member in our_clan.get('members', []):
-                                    m_tag = member.get('tag')
-                                    if m_tag not in players:
-                                        players[m_tag] = {'name': member.get('name', 'Unknown'), 'stars': 0, 'dest': 0.0}
-                                    for atk in member.get('attacks', []):
-                                        players[m_tag]['stars'] += atk.get('stars', 0)
-                                        players[m_tag]['dest'] += atk.get('destructionPercentage', 0.0)
-                
-                sorted_top = sorted(players.values(), key=lambda x: (x['stars'], x['dest']), reverse=True)[:10]
-                if sorted_top:
-                    preview_lines = ["🏆 **Kandidat Layak Bonus (Top 10 Live CWL):**"]
-                    for idx, p in enumerate(sorted_top, 1):
-                        preview_lines.append(f"{idx}. {p['name']} — {p['stars']}⭐ ({p['dest']:.1f}%)")
-                    preview_text = "\n".join(preview_lines) + "\n────────────────────────\n"
-
-        # Validasi nama member ke clan info API
+        
         clan_data = await self.coc.get_clan_info(clan_tag)
         if not clan_data or 'memberList' not in clan_data:
             return await interaction.followup.send("❌ Gagal mengambil data clan dari API.", ephemeral=True)
@@ -255,12 +228,10 @@ class RaceCommands(commands.Cog):
             db.add(reward)
             db.commit()
 
-            result_msg = (
-                f"{preview_text}"
-                f"✅ Berhasil mencatat reward untuk **{target.get('name')}** (`{target.get('tag')}`)!\n"
-                f"📝 **Catatan:** {catatan}"
+            await interaction.followup.send(
+                f"✅ Berhasil mencatat reward untuk **{target.get('name')}** (`{target.get('tag')}`)!\n📝 **Catatan:** {catatan}",
+                ephemeral=True
             )
-            await interaction.followup.send(result_msg, ephemeral=True)
         except Exception as e:
             db.rollback()
             await interaction.followup.send(f"❌ Gagal menyimpan reward: {e}", ephemeral=True)
