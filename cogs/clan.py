@@ -19,7 +19,7 @@ class ClanCommands(commands.Cog):
         finally:
             db.close()
 
-    @app_commands.command(name="clanmembers", description="Melihat daftar semua member clan beserta jabatannya")
+    @app_commands.command(name="clanmembers", description="Melihat demografi TH dan roster struktur jabatan clan")
     async def clan_members(self, interaction: discord.Interaction):
         await interaction.response.defer()
         clan_tag = self.get_clan_tag(interaction.guild_id)
@@ -28,17 +28,43 @@ class ClanCommands(commands.Cog):
 
         clan_data = await self.coc.get_clan_info(clan_tag)
         if not clan_data or 'memberList' not in clan_data:
-            return await interaction.followup.send("❌ Gagal mengambil data.")
+            return await interaction.followup.send("❌ Gagal mengambil data dari API.")
 
         members = clan_data['memberList']
-        embed = discord.Embed(title=f"📋 Daftar Member {clan_data.get('name')} ({len(members)}/50)", color=discord.Color.dark_blue())
-
-        leaders = [m.get('name') for m in members if m.get('role') in ['leader', 'coLeader']]
-        elders = [m.get('name') for m in members if m.get('role') == 'admin']
         
-        embed.add_field(name="👑 Leader & Co-Leader", value=", ".join(leaders) if leaders else "-", inline=False)
-        embed.add_field(name="🛡️ Elder", value=", ".join(elders) if elders else "-", inline=False)
-        embed.add_field(name="⚔️ Total Member", value=f"Gunakan `/memberstats [nama]` untuk cek detail player.", inline=False)
+        # 1. Hitung Demografi TH
+        th_levels = [m.get('townHallLevel') for m in members]
+        th_counts = Counter(th_levels)
+        
+        # Format teks Demografi (contoh: TH 16: 5 | TH 15: 12)
+        th_lines = []
+        for th in sorted(th_counts.keys(), reverse=True):
+            th_lines.append(f"TH {th}: {th_counts[th]}")
+        th_text = " | ".join(th_lines)
+
+        # 2. Fungsi Pembantu untuk Memformat Roster + Tag TH
+        def format_roster(role_list):
+            role_members = [m for m in members if m.get('role') in role_list]
+            return ", ".join([f"{m.get('name')} (TH{m.get('townHallLevel')})" for m in role_members])
+
+        leaders_text = format_roster(['leader', 'coLeader'])
+        elders_text = format_roster(['admin'])
+        
+        embed = discord.Embed(
+            title=f"📊 DEMOGRAFI & ROSTER: {clan_data.get('name')}", 
+            description=f"Total: **{len(members)}/50 Member**\n*Gunakan `/memberstats [nama]` untuk cek detail individu.*", 
+            color=discord.Color.dark_blue()
+        )
+        
+        embed.add_field(name="🔰 Kekuatan Town Hall", value=f"```text\n{th_text}\n```", inline=False)
+        
+        if leaders_text:
+            embed.add_field(name="👑 Leader & Co-Leader", value=leaders_text, inline=False)
+        if elders_text:
+            # Batasi string agar tidak melebihi limit 1024 karakter Discord embed field
+            if len(elders_text) > 1000:
+                elders_text = elders_text[:1000] + "..."
+            embed.add_field(name="🛡️ Elder", value=elders_text, inline=False)
 
         await interaction.followup.send(embed=embed)
 
