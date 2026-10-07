@@ -164,10 +164,10 @@ class RaceCommands(commands.Cog):
         finally:
             db.close()
 
-    @app_commands.command(name="givereward", description="[STANDAR] Berikan reward/bonus ke member berdasarkan nama")
+    @app_commands.command(name="givereward", description="[STANDAR] Lihat 10 kandidat teratas CWL & catat reward member")
     @app_commands.describe(
-        scope="Pilih kategori (war atau cwl)",
-        nama_member="Nama member sesuai di game (bisa sebagian nama)",
+        scope="Pilih kategori (War Classic atau CWL Musim Ini)",
+        nama_member="Nama member yang ingin diberi reward",
         catatan="Catatan reward (Contoh: Medali CWL + Gold Pass)"
     )
     @app_commands.choices(scope=[
@@ -192,20 +192,48 @@ class RaceCommands(commands.Cog):
             return await interaction.followup.send("❌ Server belum di-setup!", ephemeral=True)
 
         scope_type = scope.value
-        
-        # Ambil data member langsung dari API Clan CoC untuk mencocokkan nama dan mendapatkan player tag yang valid
+
+        # Jika CWL, tarik data live round untuk menampilkan 10 kandidat teratas sebagai referensi Leader
+        preview_text = ""
+        if scope_type == "cwl":
+            cwl_data = await self.coc.get_cwl_group(clan_tag)
+            if cwl_data and cwl_data.get('state') != 'notInWar':
+                players = {}
+                for r in cwl_data.get('rounds', []):
+                    for w_tag in r.get('warTags', []):
+                        if w_tag == '#0': continue
+                        cwl_war = await self.coc.get_cwl_war(w_tag)
+                        if cwl_war and cwl_war.get('state') in ['inWar', 'warEnded']:
+                            our_clan = None
+                            if cwl_war.get('clan', {}).get('tag') == clan_tag:
+                                our_clan = cwl_war.get('clan')
+                            elif cwl_war.get('opponent', {}).get('tag') == clan_tag:
+                                our_clan = cwl_war.get('opponent')
+                            
+                            if our_clan:
+                                for member in our_clan.get('members', []):
+                                    m_tag = member.get('tag')
+                                    if m_tag not in players:
+                                        players[m_tag] = {'name': member.get('name', 'Unknown'), 'stars': 0, 'dest': 0.0}
+                                    for atk in member.get('attacks', []):
+                                        players[m_tag]['stars'] += atk.get('stars', 0)
+                                        players[m_tag]['dest'] += atk.get('destructionPercentage', 0.0)
+                
+                sorted_top = sorted(players.values(), key=lambda x: (x['stars'], x['dest']), reverse=True)[:10]
+                if sorted_top:
+                    preview_lines = ["🏆 **Kandidat Layak Bonus (Top 10 Live CWL):**"]
+                    for idx, p in enumerate(sorted_top, 1):
+                        preview_lines.append(f"{idx}. {p['name']} — {p['stars']}⭐ ({p['dest']:.1f}%)")
+                    preview_text = "\n".join(preview_lines) + "\n────────────────────────\n"
+
+        # Validasi nama member ke clan info API
         clan_data = await self.coc.get_clan_info(clan_tag)
         if not clan_data or 'memberList' not in clan_data:
             return await interaction.followup.send("❌ Gagal mengambil data clan dari API.", ephemeral=True)
 
-        members = clan_data['memberList']
-        target = next((m for m in members if nama_member.lower() in m.get('name', '').lower()), None)
-        
+        target = next((m for m in clan_data['memberList'] if nama_member.lower() in m.get('name', '').lower()), None)
         if not target:
-            return await interaction.followup.send(f"❌ Member dengan nama mengandung `{nama_member}` tidak ditemukan di clan.", ephemeral=True)
-
-        player_tag = target.get('tag')
-        player_name = target.get('name')
+            return await interaction.followup.send(f"❌ Member dengan nama `{nama_member}` tidak ditemukan di clan.", ephemeral=True)
 
         db = get_db()
         try:
@@ -221,42 +249,39 @@ class RaceCommands(commands.Cog):
             reward = RaceReward(
                 scope_type=scope_type,
                 scope_id=scope_id,
-                player_tag=player_tag,
+                player_tag=target.get('tag'),
                 reward_note=f"[{interaction.user.name}] {catatan}"
             )
             db.add(reward)
             db.commit()
 
-            await interaction.followup.send(
-                f"✅ Berhasil mencatat reward untuk **{player_name}** (`{player_tag}`)!\n📝 **Catatan:** {catatan}",
-                ephemeral=True
+            result_msg = (
+                f"{preview_text}"
+                f"✅ Berhasil mencatat reward untuk **{target.get('name')}** (`{target.get('tag')}`)!\n"
+                f"📝 **Catatan:** {catatan}"
             )
+            await interaction.followup.send(result_msg, ephemeral=True)
         except Exception as e:
             db.rollback()
-            await interaction.followup.send(f"❌ Gagal menyimpan reward ke database: {e}", ephemeral=True)
+            await interaction.followup.send(f"❌ Gagal menyimpan reward: {e}", ephemeral=True)
         finally:
             db.close()
 
     @app_commands.command(name="rewardhistory", description="[STANDAR] Lihat riwayat pemberian reward ke member")
     async def reward_history(self, interaction: discord.Interaction):
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         
         has_access, err_msg = check_standar_access(interaction.guild_id)
         if not has_access:
-            return await interaction.followup.send(err_msg)
+            return await interaction.followup.send(err_msg, ephemeral=True)
 
         clan_tag = self.get_clan_tag(interaction.guild_id)
         if not clan_tag:
-            return await interaction.followup.send("❌ Server belum di-setup!")
+            return await interaction.followup.send("❌ Server belum di-setup!", ephemeral=True)
 
         db = get_db()
         try:
-            query_history = text("""
-                SELECT rr.scope_type, rr.reward_note, rr.claimed_at, rr.player_tag
-                FROM race_rewards rr
-                ORDER BY rr.id DESC LIMIT 10
-            """)
-            history = db.execute(query_history).mappings().all()
+            history = db.query(RaceReward).order_by(RaceReward.id.desc()).limit(10).all()
 
             embed = discord.Embed(title="📜 Riwayat Pemberian Reward", color=discord.Color.blue())
 
@@ -264,15 +289,15 @@ class RaceCommands(commands.Cog):
                 embed.description = "Belum ada riwayat reward yang dicatat."
             else:
                 for h in history:
-                    date_str = h['claimed_at'].strftime("%d %b %Y") if h['claimed_at'] else "-"
+                    date_str = h.claimed_at.strftime("%d %b %Y") if hasattr(h, 'claimed_at') and h.claimed_at else "-"
                     embed.add_field(
-                        name=f"🎁 Tag: {h['player_tag']} ({h['scope_type'].upper()})",
-                        value=f"• Catatan: {h['reward_note']}\n• Tanggal: {date_str}",
+                        name=f"🎁 Tag: {h.player_tag} ({h.scope_type.upper()})",
+                        value=f"• Catatan: {h.reward_note}\n• Tanggal: {date_str}",
                         inline=False
                     )
 
             embed.set_footer(text="ixiera.id — Operating System Studio | WA: https://wa.me/6285736048626")
-            await interaction.followup.send(embed=embed)
+            await interaction.followup.send(embed=embed, ephemeral=True)
         finally:
             db.close()
 
