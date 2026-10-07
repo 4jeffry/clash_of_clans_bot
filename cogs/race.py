@@ -2,65 +2,30 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from services.db import get_db, check_standar_access
+from services.coc_client import CoCClient
 from models import ServerConfig, CWLSeason, RaceReward, War, WarAttack
 from sqlalchemy import text, func
 from datetime import datetime
 
 class RewardSelectView(discord.ui.View):
-    def __init__(self, db_session, clan_tag, scope_type="war"):
+    def __init__(self, top_members, scope_type="war"):
         super().__init__(timeout=60)
-        self.db = db_session
-        self.clan_tag = clan_tag
         self.scope_type = scope_type
         
-        # Ambil Top 5 member berdasarkan akumulasi rekap (War Classic terakhir atau CWL musim ini)
-        if scope_type == "cwl":
-            current_month = datetime.now().strftime('%Y-%m')
-            season = self.db.query(CWLSeason).filter(CWLSeason.clan_tag == clan_tag, CWLSeason.month == current_month).first()
-            if season:
-                cwl_wars = self.db.query(War).filter(War.cwl_season_id == season.id).all()
-                war_ids = [w.id for w in cwl_wars]
-                if war_ids:
-                    top_members = self.db.query(
-                        WarAttack.attacker_name,
-                        WarAttack.attacker_tag,
-                        func.sum(WarAttack.stars).label('stars')
-                    ).filter(WarAttack.war_id.in_(war_ids))\
-                     .group_by(WarAttack.attacker_name, WarAttack.attacker_tag)\
-                     .order_by(func.sum(WarAttack.stars).desc())\
-                     .limit(5).all()
-                else:
-                    top_members = []
-            else:
-                top_members = []
-        else:
-            # War Classic Terakhir / Akumulasi
-            latest_war = self.db.query(War).filter(War.clan_tag == clan_tag, War.is_cwl == False).order_by(War.id.desc()).first()
-            if latest_war:
-                top_members = self.db.query(
-                    WarAttack.attacker_name,
-                    WarAttack.attacker_tag,
-                    func.sum(WarAttack.stars).label('stars')
-                ).filter(WarAttack.war_id == latest_war.id)\
-                 .group_by(WarAttack.attacker_name, WarAttack.attacker_tag)\
-                 .order_by(func.sum(WarAttack.stars).desc())\
-                 .limit(5).all()
-            else:
-                top_members = []
-        
-        if top_members:
-            options = [
+        options = []
+        for m in top_members:
+            options.append(
                 discord.SelectOption(
-                    label=m.attacker_name[:25], 
-                    value=m.attacker_tag, 
-                    description=f"Total Bintang Rekap: {m.stars}⭐"
-                ) for m in top_members
-            ]
-            self.add_item(RewardSelect(options, scope_type))
+                    label=m['name'][:25], 
+                    value=m['tag'], 
+                    description=f"Skor: {int(m['stars'])}⭐ | Destruksi: {m['dest']:.1f}%"
+                )
+            )
+        self.add_item(RewardSelect(options, scope_type))
 
 class RewardSelect(discord.ui.Select):
     def __init__(self, options, scope_type):
-        super().__init__(placeholder="Pilih kandidat top dari rekap...", min_values=1, max_values=1, options=options)
+        super().__init__(placeholder="Pilih kandidat prioritas peraih bonus...", min_values=1, max_values=1, options=options)
         self.scope_type = scope_type
 
     async def callback(self, interaction: discord.Interaction):
@@ -70,7 +35,7 @@ class RewardNoteModal(discord.ui.Modal, title="Form Catatan Apresiasi Member"):
     keterangan = discord.ui.TextInput(
         label="Keterangan / Alasan Reward",
         style=discord.TextStyle.paragraph,
-        placeholder="Contoh: MVP Rekap karena konsisten sumbang bintang tertinggi!",
+        placeholder="Contoh: MVP Rekap bulan ini karena konsisten sumbang bintang tertinggi!",
         required=True,
         max_length=300
     )
@@ -83,7 +48,6 @@ class RewardNoteModal(discord.ui.Modal, title="Form Catatan Apresiasi Member"):
     async def on_submit(self, interaction: discord.Interaction):
         db = get_db()
         try:
-            # Ambil ID scope yang sesuai (war terakhir atau cwl aktif)
             config = db.query(ServerConfig).filter(ServerConfig.guild_id == str(interaction.guild_id)).first()
             clan_tag = config.clan_tag if config else None
             
@@ -120,6 +84,7 @@ class RewardNoteModal(discord.ui.Modal, title="Form Catatan Apresiasi Member"):
 class RaceCommands(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self.coc = CoCClient()
 
     def get_clan_tag(self, guild_id):
         db = get_db()
@@ -283,34 +248,82 @@ class RaceCommands(commands.Cog):
         interaction: discord.Interaction, 
         scope: app_commands.Choice[str]
     ):
+        # Karena kita melakukan kalkulasi API yang butuh waktu, pakai ephemeral defer
+        await interaction.response.defer(ephemeral=True)
+        
         has_access, err_msg = check_standar_access(interaction.guild_id)
         if not has_access:
-            return await interaction.response.send_message(err_msg, ephemeral=True)
+            return await interaction.followup.send(err_msg, ephemeral=True)
 
         clan_tag = self.get_clan_tag(interaction.guild_id)
         if not clan_tag:
-            return await interaction.response.send_message("❌ Server belum di-setup!", ephemeral=True)
+            return await interaction.followup.send("❌ Server belum di-setup!", ephemeral=True)
 
-        db = get_db()
-        try:
-            scope_type = scope.value
-            view = RewardSelectView(db, clan_tag, scope_type=scope_type)
+        scope_type = scope.value
+        top_members = []
+
+        if scope_type == "cwl":
+            # ==========================================
+            # LIVE API FETCH KHUSUS CWL (BYPASS DATABASE)
+            # ==========================================
+            cwl_data = await self.coc.get_cwl_group(clan_tag)
+            if not cwl_data or cwl_data.get('state') == 'notInWar':
+                return await interaction.followup.send("🛡️ Clan tidak sedang dalam masa CWL.", ephemeral=True)
+                
+            players = {}
+            for r in cwl_data.get('rounds', []):
+                for w_tag in r.get('warTags', []):
+                    if w_tag == '#0': continue
+                    cwl_war = await self.coc.get_cwl_war(w_tag)
+                    if cwl_war and cwl_war.get('state') in ['inWar', 'warEnded']:
+                        our_clan = None
+                        if cwl_war.get('clan', {}).get('tag') == clan_tag:
+                            our_clan = cwl_war.get('clan')
+                        elif cwl_war.get('opponent', {}).get('tag') == clan_tag:
+                            our_clan = cwl_war.get('opponent')
+                        
+                        if our_clan:
+                            for member in our_clan.get('members', []):
+                                m_tag = member.get('tag')
+                                if m_tag not in players:
+                                    players[m_tag] = {'name': member.get('name', 'Unknown'), 'tag': m_tag, 'stars': 0, 'dest': 0.0}
+                                for atk in member.get('attacks', []):
+                                    players[m_tag]['stars'] += atk.get('stars', 0)
+                                    players[m_tag]['dest'] += atk.get('destructionPercentage', 0.0)
             
-            if not view.children:
-                return await interaction.response.send_message(
-                    f"❌ Belum ada data rekap untuk kategori **{scope.name}** di database.",
-                    ephemeral=True
-                )
+            # Sortir by Bintang Tertinggi -> Destruksi Tertinggi
+            top_members = sorted(players.values(), key=lambda x: (x['stars'], x['dest']), reverse=True)[:5]
+        else:
+            # ==========================================
+            # DATABASE FETCH KHUSUS WAR CLASSIC
+            # ==========================================
+            db = get_db()
+            try:
+                latest_war = db.query(War).filter(War.clan_tag == clan_tag, War.is_cwl == False).order_by(War.id.desc()).first()
+                if latest_war:
+                    top = db.query(
+                        WarAttack.attacker_name,
+                        WarAttack.attacker_tag,
+                        func.sum(WarAttack.stars).label('stars'),
+                        func.sum(WarAttack.destruction_percentage).label('dest')
+                    ).filter(WarAttack.war_id == latest_war.id)\
+                     .group_by(WarAttack.attacker_name, WarAttack.attacker_tag)\
+                     .order_by(func.sum(WarAttack.stars).desc(), func.sum(WarAttack.destruction_percentage).desc())\
+                     .limit(5).all()
+                    
+                    top_members = [{'name': m.attacker_name, 'tag': m.attacker_tag, 'stars': m.stars, 'dest': m.dest} for m in top]
+            finally:
+                db.close()
 
-            await interaction.response.send_message(
-                f"🎁 **Pilih Kandidat Top Member** dari rekap **{scope.name}**:",
-                view=view,
-                ephemeral=True
-            )
-        except Exception as e:
-            await interaction.response.send_message(f"❌ Terjadi kesalahan: {e}", ephemeral=True)
-        finally:
-            db.close()
+        if not top_members:
+            return await interaction.followup.send(f"❌ Belum ada data rekap untuk **{scope.name}**.", ephemeral=True)
+
+        view = RewardSelectView(top_members=top_members, scope_type=scope_type)
+        await interaction.followup.send(
+            f"🎁 **Pilih Kandidat Prioritas Bonus** dari rekap **{scope.name}**:\n*Kandidat otomatis diurutkan berdasarkan perolehan Stars tertinggi, lalu Total Destruksi jika Stars seri.*",
+            view=view,
+            ephemeral=True
+        )
 
     @app_commands.command(name="rewardhistory", description="[STANDAR] Lihat riwayat pemberian reward ke member")
     async def reward_history(self, interaction: discord.Interaction):
