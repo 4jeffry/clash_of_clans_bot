@@ -101,7 +101,6 @@ class RaceCommands(commands.Cog):
         if not clan_tag:
             return await interaction.followup.send("❌ Server belum di-setup!")
 
-        # Tarik data live grup CWL langsung dari API Clash of Clans
         cwl_data = await self.coc.get_cwl_group(clan_tag)
         if not cwl_data or not isinstance(cwl_data, dict) or cwl_data.get('state') == 'notInWar':
             return await interaction.followup.send("🛡️ Clan tidak sedang dalam masa Clan War League (CWL).")
@@ -119,7 +118,6 @@ class RaceCommands(commands.Cog):
                 if w_tag == '#0': continue
                 cwl_war = await self.coc.get_cwl_war(w_tag)
                 
-                # Ambil data dari ronde yang sedang berjalan atau sudah selesai
                 if cwl_war and isinstance(cwl_war, dict) and cwl_war.get('state') in ['inWar', 'warEnded']:
                     our_clan = None
                     if cwl_war.get('clan', {}).get('tag') == clan_tag:
@@ -147,7 +145,6 @@ class RaceCommands(commands.Cog):
         if not players:
             return await interaction.followup.send("❌ Belum ada data serangan CWL yang tercatat di API untuk musim ini.")
 
-        # Urutkan berdasarkan: 1. Bintang Tertinggi, 2. Total Destruksi Tertinggi
         sorted_players = sorted(
             players.values(),
             key=lambda x: (x['stars'], x['dest']),
@@ -156,26 +153,25 @@ class RaceCommands(commands.Cog):
 
         embed = discord.Embed(
             title=f"🏆 Live Kandidat Bonus CWL ({season})",
-            description=f"Status Ronde: **Round Berjalan {active_rounds}/{len(rounds)}**\n*Diurutkan otomatis dari Bintang terbanyak & Destruksi tertinggi (Referensi Utama Peraih Medali Bonus).*",
+            description=f"Status Ronde: **Round Berjalan {active_rounds}/{len(rounds)}**\n*Diurutkan otomatis dari Bintang terbanyak & Destruksi tertinggi.*",
             color=discord.Color.purple()
         )
 
         leaderboard_text = ""
-        # Tampilkan Top 10 Kandidat Terbaik
         for i, p in enumerate(sorted_players[:10], 1):
-            badge = "🎁 " if i <= 8 else "" # Anggap slot bonus standar sekitar 8 orang (bisa disesuaikan)
-            leaderboard_text += f"{i}. {badge}**{p['name']}**\n└ ⚔️ Atk: {p['attacks']} | ⭐ Bintang: {p['stars']} |  destrucción: {p['dest']:.1f}%\n"
+            badge = "🎁 " if i <= 8 else ""
+            leaderboard_text += f"{i}. {badge}**{p['name']}**\n└ ⚔️ Atk: {p['attacks']} | ⭐ Bintang: {p['stars']} | Destruksi: {p['dest']:.1f}%\n"
 
         embed.add_field(name="📊 Top 10 Performa Member", value=leaderboard_text if leaderboard_text else "Belum ada data.", inline=False)
         embed.set_footer(text="ixiera.id — Operating System Studio | WA: https://wa.me/6285736048626")
         
         await interaction.followup.send(embed=embed)
 
-    @app_commands.command(name="givereward", description="[STANDAR] Catat reward/bonus ke member tertentu")
+    @app_commands.command(name="givereward", description="[STANDAR] Catat reward/bonus ke member (bisa beberapa nama pisah koma)")
     @app_commands.describe(
         scope="Pilih kategori (War Classic atau CWL Musim Ini)",
-        nama_member="Nama member sesuai di game",
-        catatan="Catatan (Contoh: Medali CWL + Gold Pass)"
+        daftar_nama="Nama member sesuai di game (pisahkan dengan koma jika banyak, cth: Jeff, Koko Ambon)",
+        catatan="Catatan reward (Contoh: Medali CWL + Gold Pass)"
     )
     @app_commands.choices(scope=[
         app_commands.Choice(name="War Classic", value="war"),
@@ -185,7 +181,7 @@ class RaceCommands(commands.Cog):
         self, 
         interaction: discord.Interaction, 
         scope: app_commands.Choice[str],
-        nama_member: str,
+        daftar_nama: str,
         catatan: str
     ):
         await interaction.response.defer(ephemeral=True)
@@ -204,9 +200,11 @@ class RaceCommands(commands.Cog):
         if not clan_data or 'memberList' not in clan_data:
             return await interaction.followup.send("❌ Gagal mengambil data clan dari API.", ephemeral=True)
 
-        target = next((m for m in clan_data['memberList'] if nama_member.lower() in m.get('name', '').lower()), None)
-        if not target:
-            return await interaction.followup.send(f"❌ Member dengan nama `{nama_member}` tidak ditemukan di clan.", ephemeral=True)
+        members = clan_data['memberList']
+        raw_names = [n.strip() for n in daftar_nama.split(',') if n.strip()]
+        
+        success_list = []
+        not_found_list = []
 
         db = get_db()
         try:
@@ -219,22 +217,34 @@ class RaceCommands(commands.Cog):
                 w = db.query(War).filter(War.clan_tag == clan_tag, War.is_cwl == False).order_by(War.id.desc()).first()
                 if w: scope_id = w.id
 
-            reward = RaceReward(
-                scope_type=scope_type,
-                scope_id=scope_id,
-                player_tag=target.get('tag'),
-                reward_note=f"[{interaction.user.name}] {catatan}"
-            )
-            db.add(reward)
+            for name_query in raw_names:
+                target = next((m for m in members if name_query.lower() in m.get('name', '').lower()), None)
+                if target:
+                    reward = RaceReward(
+                        scope_type=scope_type,
+                        scope_id=scope_id,
+                        player_tag=target.get('tag'),
+                        reward_note=f"[{interaction.user.name}] {catatan}"
+                    )
+                    db.add(reward)
+                    success_list.append(target.get('name'))
+                else:
+                    not_found_list.append(name_query)
+
             db.commit()
 
-            await interaction.followup.send(
-                f"✅ Berhasil mencatat reward untuk **{target.get('name')}** (`{target.get('tag')}`)!\n📝 **Catatan:** {catatan}",
-                ephemeral=True
-            )
+            msg_lines = []
+            if success_list:
+                msg_lines.append(f"✅ **Berhasil mencatat reward untuk:**\n" + ", ".join([f"`{n}`" for n in success_list]))
+            if not_found_list:
+                msg_lines.append(f"⚠️ **Tidak ditemukan di clan:**\n" + ", ".join([f"`{n}`" for n in not_found_list]))
+            
+            msg_lines.append(f"\n📝 **Catatan:** {catatan}")
+
+            await interaction.followup.send("\n".join(msg_lines), ephemeral=True)
         except Exception as e:
             db.rollback()
-            await interaction.followup.send(f"❌ Gagal menyimpan reward: {e}", ephemeral=True)
+            await interaction.followup.send(f"❌ Gagal menyimpan reward ke database: {e}", ephemeral=True)
         finally:
             db.close()
 
