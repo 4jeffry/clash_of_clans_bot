@@ -33,7 +33,8 @@ def _check_pro_access(guild_id: str):
         db.close()
 
 async def _generate_with_fallback(client, contents):
-    models_to_try = ['gemini-2.5-flash', 'gemini-2.0-flash']
+    # UPDATE KE MODEL TERBARU SESUAI LOG GOOGLE API
+    models_to_try = ['gemini-3.8-flash', 'gemini-3.5-flash-lite']
     max_retries = 3
     
     for model_name in models_to_try:
@@ -111,7 +112,6 @@ async def run_ai_scout(guild_id: str, war_data: dict) -> str:
     opponent = war_data.get('opponent', {})
     members = opponent.get('members', [])
     
-    # Extract TH composition directly from war data
     opp_th_levels = Counter([m.get('townhallLevel', 0) for m in members if m.get('townhallLevel')])
     opp_th_summary = ", ".join([f"TH{th}: {count}" for th, count in sorted(opp_th_levels.items(), reverse=True)])
 
