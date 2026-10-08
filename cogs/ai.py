@@ -1,18 +1,21 @@
 import discord
+import io
 from discord import app_commands
 from discord.ext import commands
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.lib.pagesizes import letter
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from services.llm_client import (
     run_ai_audit, 
     run_war_strategy, 
     run_ai_screen, 
     run_ai_scout,
     run_ai_opponent,
-    run_ai_report  # GANTI base-scan jadi ai-report
+    run_ai_report
 )
 from services.coc_client import CoCClient
 from services.db import get_db
 from models import ServerConfig
-import asyncio
 
 class AICog(commands.Cog):
     def __init__(self, bot):
@@ -27,16 +30,50 @@ class AICog(commands.Cog):
         finally:
             db.close()
             
-    async def send_long_message(self, interaction: discord.Interaction, text: str):
-        if len(text) <= 2000:
-            await interaction.followup.send(text)
-        else:
-            chunks = [text[i:i+1900] for i in range(0, len(text), 1900)]
-            for chunk in chunks:
-                await interaction.followup.send(chunk)
-                await asyncio.sleep(1)
+    async def send_as_pdf(self, interaction: discord.Interaction, title: str, text: str):
+        """Membuat dan mengirim output AI sebagai file PDF menggunakan reportlab."""
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=40, leftMargin=40, topMargin=40, bottomMargin=40)
+        styles = getSampleStyleSheet()
+        
+        custom_style = ParagraphStyle(
+            'CustomText',
+            parent=styles['Normal'],
+            fontName='Helvetica',
+            fontSize=11,
+            leading=16,
+            spaceAfter=6
+        )
+        title_style = styles['Heading1']
 
-    # Helper Pintar buat AI biar tau lagi War Biasa atau CWL
+        story = []
+        clean_title = title.replace('_', ' ').upper()
+        story.append(Paragraph(f"LAPORAN AI: {clean_title}", title_style))
+        story.append(Spacer(1, 15))
+
+        # Pecah teks dari AI per baris agar rapi di PDF
+        for line in text.split('\n'):
+            if line.strip() == '':
+                story.append(Spacer(1, 8))
+            else:
+                # Escape karakter khusus XML agar reportlab tidak error
+                safe_line = line.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+                story.append(Paragraph(safe_line, custom_style))
+
+        doc.build(story)
+        buffer.seek(0)
+        
+        filename = f"{title.replace(' ', '_').lower()}.pdf"
+        discord_file = discord.File(fp=buffer, filename=filename)
+        
+        embed = discord.Embed(
+            title=f"📄 Dokumen AI: {clean_title}",
+            description="Laporan berhasil dibuat. Silakan unduh dokumen PDF di bawah ini.",
+            color=discord.Color.red()
+        )
+        embed.set_footer(text="ixiera.id — AI Executive Systems")
+        await interaction.followup.send(embed=embed, file=discord_file)
+
     async def _get_smart_war_data(self, clan_tag: str):
         try:
             war_data = await self.coc.get_current_war(clan_tag)
@@ -45,13 +82,11 @@ class AICog(commands.Cog):
         except Exception:
             pass
 
-        # Fallback Cek CWL Group
         try:
             cwl_group = await self.coc.get_cwl_group(clan_tag)
             if cwl_group and isinstance(cwl_group, dict) and cwl_group.get('state') != 'notInWar':
                 rounds = cwl_group.get('rounds', [])
                 prep_war = None
-                
                 for r in reversed(rounds):
                     for w_tag in r.get('warTags', []):
                         if w_tag == '#0': continue
@@ -63,7 +98,6 @@ class AICog(commands.Cog):
                             if t1 == clan_tag or t2 == clan_tag:
                                 if t2 == clan_tag:
                                     cwl_war['clan'], cwl_war['opponent'] = cwl_war['opponent'], cwl_war['clan']
-                                
                                 state = cwl_war.get('state')
                                 if state == 'inWar':
                                     return cwl_war
@@ -73,85 +107,95 @@ class AICog(commands.Cog):
                     return prep_war
         except Exception:
             pass
-
         return None
 
-    @app_commands.command(name="ai-audit", description="[AI PRO] Deep audit kesehatan clan & evaluasi member")
+    async def _get_latest_finished_war(self, clan_tag: str):
+        try:
+            cwl_group = await self.coc.get_cwl_group(clan_tag)
+            if cwl_group and isinstance(cwl_group, dict) and cwl_group.get('state') != 'notInWar':
+                rounds = cwl_group.get('rounds', [])
+                for r in reversed(rounds):
+                    for w_tag in r.get('warTags', []):
+                        if w_tag == '#0': continue
+                        cwl_war = await self.coc.get_cwl_war(w_tag)
+                        if cwl_war and isinstance(cwl_war, dict) and cwl_war.get('state') == 'warEnded':
+                            t1 = cwl_war.get('clan', {}).get('tag')
+                            t2 = cwl_war.get('opponent', {}).get('tag')
+                            if t1 == clan_tag or t2 == clan_tag:
+                                if t2 == clan_tag:
+                                    cwl_war['clan'], cwl_war['opponent'] = cwl_war['opponent'], cwl_war['clan']
+                                return cwl_war
+        except Exception:
+            pass
+            
+        war_logs = await self.coc.get_war_log(clan_tag)
+        if war_logs and isinstance(war_logs, list) and len(war_logs) > 0:
+            return war_logs[0]
+        return None
+
+    @app_commands.command(name="ai-audit", description="[AI PRO] Audit kesehatan klan & evaluasi member (Cetak PDF)")
     async def ai_audit(self, interaction: discord.Interaction):
         await interaction.response.defer()
         result = await run_ai_audit(str(interaction.guild_id))
-        await self.send_long_message(interaction, result)
+        await self.send_as_pdf(interaction, "Audit_Kesehatan_Klan", result)
 
-    @app_commands.command(name="war-strategy", description="[AI PRO] Analisis agregat war saat ini & rotasi attack")
+    @app_commands.command(name="war-strategy", description="[AI PRO] Taktik agregat rotasi attack CWL/War (Cetak PDF)")
     async def ai_war_strategy(self, interaction: discord.Interaction):
         await interaction.response.defer()
         clan_tag = self.get_clan_tag(interaction.guild_id)
         if not clan_tag:
             return await interaction.followup.send("❌ Server belum di-setup!")
-
         war_data = await self._get_smart_war_data(clan_tag)
         result = await run_war_strategy(str(interaction.guild_id), war_data)
-        await self.send_long_message(interaction, result)
+        await self.send_as_pdf(interaction, "Strategi_Perang_Aktif", result)
 
-    @app_commands.command(name="ai-report", description="[AI PRO] Evaluasi performa member & MVP pasca-war selesai")
+    @app_commands.command(name="ai-report", description="[AI PRO] Evaluasi performa member & MVP pasca CWL/War (Cetak PDF)")
     async def ai_report(self, interaction: discord.Interaction):
         await interaction.response.defer()
         clan_tag = self.get_clan_tag(interaction.guild_id)
         if not clan_tag:
             return await interaction.followup.send("❌ Server belum di-setup!")
-            
-        war_logs = await self.coc.get_war_log(clan_tag)
-        if not war_logs or isinstance(war_logs, str):
-            return await interaction.followup.send("❌ Gagal membaca history war log atau setelan log private.")
+        latest_war = await self._get_latest_finished_war(clan_tag)
+        if not latest_war:
+            return await interaction.followup.send("❌ Tidak ada data perang atau CWL yang baru saja selesai.")
+        result = await run_ai_report(str(interaction.guild_id), latest_war)
+        await self.send_as_pdf(interaction, "Laporan_Evaluasi_Pasca_Perang", result)
 
-        # Ambil war log paling baru
-        latest_war_log = war_logs[0] if war_logs else None
-        
-        result = await run_ai_report(str(interaction.guild_id), latest_war_log)
-        await self.send_long_message(interaction, result)
-
-    @app_commands.command(name="ai-screen", description="[AI PRO] Cek profil calon member sebelum di-acc join")
-    @app_commands.describe(player_tag="Tag player calon member (contoh: #ABC1234)")
+    @app_commands.command(name="ai-screen", description="[AI PRO] Intel profil calon member sebelum di-acc (Cetak PDF)")
+    @app_commands.describe(player_tag="Tag player calon member (cth: #ABC1234)")
     async def ai_screen(self, interaction: discord.Interaction, player_tag: str):
         await interaction.response.defer()
-        
         if not player_tag.startswith('#'):
             player_tag = f"#{player_tag}"
-            
         player_data = await self.coc.get_player_info(player_tag)
         if not player_data or 'tag' not in player_data:
-            return await interaction.followup.send("❌ Data player tidak ditemukan! Pastikan tag-nya benar.")
-
+            return await interaction.followup.send("❌ Data player tidak ditemukan!")
         result = await run_ai_screen(str(interaction.guild_id), player_data)
-        await self.send_long_message(interaction, result)
+        await self.send_as_pdf(interaction, f"Screening_Member_{player_data.get('name')}", result)
 
-    @app_commands.command(name="ai-scout", description="[AI PRO] Intel war lawan: cari base terlemah & strategi pembersihan")
+    @app_commands.command(name="ai-scout", description="[AI PRO] Intel CWL/War lawan: cari target base terlemah (Cetak PDF)")
     async def ai_scout(self, interaction: discord.Interaction):
         await interaction.response.defer()
         clan_tag = self.get_clan_tag(interaction.guild_id)
         if not clan_tag:
             return await interaction.followup.send("❌ Server belum di-setup!")
-
         war_data = await self._get_smart_war_data(clan_tag)
         if not war_data or war_data.get('state') not in ['inWar', 'preparation']:
             return await interaction.followup.send("❌ Clan sedang tidak dalam periode War atau CWL aktif!")
-
         result = await run_ai_scout(str(interaction.guild_id), war_data)
-        await self.send_long_message(interaction, result)
+        await self.send_as_pdf(interaction, "Scouting_Target_Lawan", result)
 
-    @app_commands.command(name="ai-opponent", description="[AI PRO] Scouting klan lawan: estimasi peluang menang & kekuatan")
+    @app_commands.command(name="ai-opponent", description="[AI PRO] Estimasi peluang menang vs klan lawan (Cetak PDF)")
     async def ai_opponent(self, interaction: discord.Interaction):
         await interaction.response.defer()
         clan_tag = self.get_clan_tag(interaction.guild_id)
         if not clan_tag:
-            return await interaction.followup.send("❌ Server belum di-setup! Gunakan `/setup`.")
-
+            return await interaction.followup.send("❌ Server belum di-setup!")
         war_data = await self._get_smart_war_data(clan_tag)
         if not war_data or war_data.get('state') not in ['inWar', 'preparation']:
             return await interaction.followup.send("❌ Clan sedang tidak dalam periode War atau CWL aktif!")
-
         result = await run_ai_opponent(str(interaction.guild_id), clan_tag, war_data)
-        await self.send_long_message(interaction, result)
+        await self.send_as_pdf(interaction, "Estimasi_Peluang_Menang", result)
 
 async def setup(bot):
     await bot.add_cog(AICog(bot))
