@@ -25,18 +25,18 @@ def _check_pro_access(guild_id: str):
         db.close()
 
 async def _generate_with_fallback(client, contents):
-    models_to_try = ['gemini-2.5-flash', 'gemini-2.0-flash']
-    max_retries = 3
+    # GEMINI-3.8-FLASH ADALAH TARGET UTAMA, GEMINI-3.5-FLASH-LITE SEBAGAI CADANGAN
+    models_to_try = ['gemini-3.8-flash', 'gemini-3.5-flash-lite']
     
     for model_name in models_to_try:
-        for attempt in range(max_retries):
+        for attempt in range(3):
             try:
                 response = await client.aio.models.generate_content(model=model_name, contents=contents)
                 return response.text
             except Exception as e:
                 error_msg = str(e).upper()
                 if any(err in error_msg for err in ["503", "UNAVAILABLE", "429", "TOO_MANY_REQUESTS"]):
-                    if attempt < max_retries - 1:
+                    if attempt < 2:
                         await asyncio.sleep(2 ** attempt)
                         continue
                 logger.warning(f"Model {model_name} gagal ({e}). Beralih ke fallback...")
