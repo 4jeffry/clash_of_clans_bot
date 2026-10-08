@@ -4,6 +4,7 @@ from discord.ext import commands
 from services.coc_client import CoCClient
 from services.db import get_db, check_standar_access
 from models import ServerConfig
+from datetime import datetime, timezone
 
 def create_progress_bar(percentage: float, length: int = 12) -> str:
     """Helper untuk membuat visual progress bar teks"""
@@ -14,6 +15,27 @@ def create_progress_bar(percentage: float, length: int = 12) -> str:
     filled = int((percentage / 100) * length)
     empty = length - filled
     return f"[{'█' * filled}{'░' * empty}] {percentage:.1f}%"
+
+def parse_coc_time(time_str: str):
+    """Helper untuk memparsing format waktu CoC (YYYYMMDDTHHMMSS.mmmZ) ke sisa waktu"""
+    if not time_str:
+        return None
+    try:
+        # Format CoC: 20261008T143000.000Z
+        clean_time = time_str.replace('Z', '')
+        dt = datetime.strptime(clean_time, "%Y%m%dT%H%M%S.%f")
+        dt = dt.replace(tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
+        diff = dt - now
+        
+        if diff.total_seconds() <= 0:
+            return "Waktu Habis / Selesai"
+        
+        hours = int(diff.total_seconds() // 3600)
+        minutes = int((diff.total_seconds() % 3600) // 60)
+        return f"{hours} jam {minutes} menit lagi"
+    except Exception:
+        return time_str
 
 class WarCommands(commands.Cog):
     def __init__(self, bot):
@@ -29,7 +51,6 @@ class WarCommands(commands.Cog):
             db.close()
 
     async def _get_active_war(self, clan_tag: str):
-        """Helper cerdas: Cek War Biasa dulu, kalau tidak ada baru fallback cek CWL (Prioritas inWar)"""
         try:
             war_data = await self.coc.get_current_war(clan_tag)
             if war_data and isinstance(war_data, dict) and war_data.get('state') in ['inWar', 'preparation']:
@@ -37,7 +58,6 @@ class WarCommands(commands.Cog):
         except Exception:
             war_data = None
 
-        # Fallback Cek CWL Group
         try:
             cwl_group = await self.coc.get_cwl_group(clan_tag)
             if cwl_group and isinstance(cwl_group, dict) and cwl_group.get('state') != 'notInWar':
@@ -66,7 +86,6 @@ class WarCommands(commands.Cog):
                 
                 if prep_war:
                     return prep_war, "CWL"
-
         except Exception:
             pass
 
@@ -136,12 +155,9 @@ class WarCommands(commands.Cog):
             raw_stars = c['stars']
             wins = c['wins']
             total_score = raw_stars + (wins * 10)
-            
             marker = " *" if c['tag'] == clan_tag else ""
             
-            # Baris 1: Nama Klan
             table_lines.append(f"{rank}. {name}{marker}")
-            # Baris 2: Indikator Angka (Diperpendek spasinya agar fit di HP)
             table_lines.append(f"   └ Bintang:{raw_stars} | Win:{wins} | Tot:{total_score}")
 
         table_content = "```text\n" + "\n".join(table_lines) + "\n```"
@@ -152,7 +168,6 @@ class WarCommands(commands.Cog):
             color=discord.Color.purple()
         )
         embed.add_field(name="───────────", value=table_content, inline=False)
-        
         await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="warstatus", description="Melihat status Clan War / CWL saat ini")
@@ -164,7 +179,7 @@ class WarCommands(commands.Cog):
         
         war_data, war_type = await self._get_active_war(clan_tag)
         if not war_data or not isinstance(war_data, dict) or war_data.get('state') == 'notInWar':
-            return await interaction.followup.send("🛡️ Clan sedang tidak dalam perang aktif atau masa persiapan awal (atau War Log diset Private).")
+            return await interaction.followup.send("🛡️ Clan sedang tidak dalam perang aktif atau masa persiapan awal.")
         
         state = str(war_data.get('state', 'unknown')).upper()
         team_size = war_data.get('teamSize', 0)
@@ -206,17 +221,15 @@ class WarCommands(commands.Cog):
         }
 
         title_prefix = "🏆 CWL ROUND STATUS" if war_type == "CWL" else "⚔️ WAR STATUS"
-
         embed = discord.Embed(
             title=f"{title_prefix}: {state}",
-            description=f"Format: **{team_size} vs {team_size}** ({'1 Attack/Member' if war_type == 'CWL' else '2 Attacks/Member'})\n*Update real-time dari API Clash of Clans*",
+            description=f"Format: **{team_size} vs {team_size}**",
             color=color_map.get(state, discord.Color.gold())
         )
         embed.add_field(name="───────────", value=box_content, inline=False)
-        
         await interaction.followup.send(embed=embed)
 
-    @app_commands.command(name="wartime", description="Cek sisa waktu war & sisa attack yang belum dipakai")
+    @app_commands.command(name="wartime", description="Cek sisa waktu war aktif & sisa attack yang belum dipakai")
     async def wartime(self, interaction: discord.Interaction):
         await interaction.response.defer()
         
@@ -230,7 +243,7 @@ class WarCommands(commands.Cog):
 
         war_data, war_type = await self._get_active_war(clan_tag)
         if not war_data or not isinstance(war_data, dict) or war_data.get('state') != 'inWar':
-            return await interaction.followup.send("🛡️ Clan sedang tidak dalam masa perang aktif (inWar).")
+            return await interaction.followup.send("🛡️ Clan sedang tidak dalam masa perang aktif (`inWar`).")
 
         clan = war_data.get('clan', {})
         members = clan.get('members', [])
@@ -238,18 +251,21 @@ class WarCommands(commands.Cog):
         total_attacks_used = sum(len(m.get('attacks', [])) for m in members)
         max_attacks = len(members) * war_data.get('attacksPerMember', 1 if war_type == "CWL" else 2)
         remaining_attacks = max_attacks - total_attacks_used
+        
+        end_time_raw = war_data.get('endTime')
+        time_left = parse_coc_time(end_time_raw)
 
-        embed = discord.Embed(title=f"⏰ WARTIME & ATTACK CHECK ({war_type})", color=discord.Color.dark_red())
+        embed = discord.Embed(title=f"⏰ SISA WAKTU & SERANGAN WAR ({war_type})", color=discord.Color.dark_red())
         
         info_text = (
             f"```text\n"
-            f"Sisa Attack Clan : {remaining_attacks} / {max_attacks}\n"
-            f"Total Stars      : {clan.get('stars', 0)}\n"
-            f"Total Destruksi  : {clan.get('destructionPercentage', 0):.1f}%\n"
+            f"⏳ Sisa Waktu War : {time_left}\n"
+            f"⚔️ Sisa Attack    : {remaining_attacks} / {max_attacks}\n"
+            f"⭐ Total Stars    : {clan.get('stars', 0)}\n"
+            f"🔥 Total Destruksi: {clan.get('destructionPercentage', 0):.1f}%\n"
             f"```"
         )
         embed.add_field(name="───────────", value=info_text, inline=False)
-
         await interaction.followup.send(embed=embed)
 
 async def setup(bot):
