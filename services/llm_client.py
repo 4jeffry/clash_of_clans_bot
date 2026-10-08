@@ -2,10 +2,10 @@ import os
 import logging
 import asyncio
 from google import genai
-from google.genai import types
 from services.db import get_db
 from models import ClanMember, ServerConfig, WarHistory
 from datetime import datetime
+from collections import Counter
 
 logger = logging.getLogger('bot.llm')
 
@@ -25,15 +25,15 @@ def _check_pro_access(guild_id: str):
             return None, (
                 "⚠️ **Akses AI Pro Belum Aktif**\n"
                 "Fitur analisis mendalam ini khusus untuk **Tier AI Pro** (Rp30.000/bulan).\n"
-                "Hubungi Admin untuk upgrade lisensi server kamu!"
+                "Hubungi Admin ixiera.id untuk upgrade lisensi server kamu!\n"
+                "💬 WA: https://wa.me/6285736048626"
             )
         return config, None
     finally:
         db.close()
 
 async def _generate_with_fallback(client, contents):
-    """Helper untuk eksekusi LLM dengan mekanisme fallback model otomatis."""
-    models_to_try = ['gemini-3.6-flash', 'gemini-3.5-flash-lite']
+    models_to_try = ['gemini-2.5-flash', 'gemini-2.0-flash']
     max_retries = 3
     
     for model_name in models_to_try:
@@ -43,34 +43,29 @@ async def _generate_with_fallback(client, contents):
                 return response.text
             except Exception as e:
                 error_msg = str(e).upper()
-                # Jika server sibuk atau limit, tunggu dan retry di model yang sama
                 if "503" in error_msg or "UNAVAILABLE" in error_msg or "429" in error_msg or "TOO_MANY_REQUESTS" in error_msg:
                     if attempt < max_retries - 1:
                         await asyncio.sleep(2 ** attempt)
                         continue
-                
-                # Jika error persisten (misal 404 model not found) atau retry habis, lanjut ke fallback model
-                logger.warning(f"Model {model_name} gagal dieksekusi: {e}. Beralih ke fallback...")
+                logger.warning(f"Model {model_name} gagal: {e}. Fallback...")
                 break 
                 
     logger.error("Semua model AI gagal merespons.")
-    return "❌ Server AI sedang mengalami gangguan atau limitasi. Mohon coba beberapa saat lagi."
+    return "❌ Server AI Google sedang mengalami gangguan. Coba beberapa saat lagi."
 
 async def run_ai_audit(guild_id: str) -> str:
     api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        return "❌ API Key AI belum dikonfigurasi."
+    if not api_key: return "❌ API Key AI belum dikonfigurasi."
 
     config, err_msg = _check_pro_access(guild_id)
-    if err_msg:
-        return err_msg
+    if err_msg: return err_msg
 
     db = get_db()
     try:
         clan_tag = config.clan_tag
         members = db.query(ClanMember).filter(ClanMember.clan_tag == clan_tag).all()
         if not members:
-            return f"❌ Data member untuk clan `{clan_tag}` belum tersinkronisasi."
+            return f"❌ Data member untuk clan `{clan_tag}` belum tersinkronisasi di database. Tunggu proses background sync."
 
         total_members = len(members)
         total_donations = sum(m.donations for m in members)
@@ -78,100 +73,141 @@ async def run_ai_audit(guild_id: str) -> str:
         
         zero_donors = [m for m in members if m.donations == 0]
         top_donors = sorted(members, key=lambda x: x.donations, reverse=True)[:5]
-        low_donors = sorted(members, key=lambda x: x.donations)[:5]
+        
+        th_levels = Counter([m.townhall_level for m in members if m.townhall_level])
+        th_summary = ", ".join([f"TH{th}: {count}" for th, count in sorted(th_levels.items(), reverse=True)])
 
-        context = f"METRICS CLAN ({clan_tag}):\n"
-        context += f"- Total Member: {total_members}/50\n"
-        context += f"- Rata-rata Donasi Clan: {avg_donations}\n"
-        context += f"- Top Donatur: {', '.join([f'{m.name} ({m.donations})' for m in top_donors])}\n"
-        context += f"- Donasi 0 ({len(zero_donors)} member): {', '.join([m.name for m in zero_donors[:10]])}\n"
-        context += f"- Sample Member Donasi Terendah: {', '.join([f'{m.name} (TH{m.townhall_level}, {m.donations} donasi)' for m in low_donors])}\n"
+        context = (
+            f"METRICS LOKAL CLAN ({clan_tag}):\n"
+            f"- Total Member: {total_members}/50\n"
+            f"- Komposisi TH: {th_summary}\n"
+            f"- Rata-rata Donasi: {avg_donations}\n"
+            f"- Top Donatur: {', '.join([f'{m.name} ({m.donations})' for m in top_donors])}\n"
+            f"- Donasi 0 ({len(zero_donors)} member): {', '.join([m.name for m in zero_donors[:10]])}\n"
+        )
     finally:
         db.close()
 
     prompt = (
-        "Lu adalah Niki, Konsultan AI Manajemen Clan Clash of Clans.\n"
-        "Gunakan gaya bahasa yang humble, suportif, dan bersahabat layaknya seorang mentor.\n"
-        "Fokuslah pada pembinaan member. JANGAN menyarankan kick secara agresif, berikan saran teguran halus atau cara leader merangkul member yang sedang pasif/sibuk di dunia nyata.\n\n"
+        "Lu adalah Niki, Konsultan AI Manajemen Clan buatan ixiera.id.\n"
+        "Gaya bahasa lu: Santai, suportif, tapi tajam menganalisis data klan.\n\n"
         f"{context}\n\n"
-        "Beri format respons yang rapi menggunakan emoji Discord:\n"
-        "1. 📊 **Kesehatan Clan** (Skor 1-10 + evaluasi positif/suportif)\n"
-        "2. 🤝 **Fokus Pembinaan** (Sebutkan member pasif & saran pendekatan personal ke mereka)\n"
-        "3. 💡 **Action Plan Minggu Ini** (Saran ringan dan membangun untuk Leader/Co-Leader)"
+        "Beri evaluasi:\n"
+        "1. 📊 **Status Kesehatan Clan** (Skor 1-100% dari aktivitas donasi & sebaran TH)\n"
+        "2. 🤝 **Evaluasi Member** (Apresiasi penggendong klan, dan saran cara logis negur parasit tanpa bikin toxic)\n"
+        "3. 💡 **Saran Action Plan Leader** (Langkah konkret minggu ini)"
     )
+
+    client = genai.Client(api_key=api_key)
+    return await _generate_with_fallback(client, prompt)
+
+async def run_ai_scout(guild_id: str, war_data: dict) -> str:
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key: return "❌ API Key AI belum dikonfigurasi."
+
+    config, err_msg = _check_pro_access(guild_id)
+    if err_msg: return err_msg
+
+    opponent = war_data.get('opponent', {})
+    members = opponent.get('members', [])
+    
+    # Extract TH composition directly from war data
+    opp_th_levels = Counter([m.get('townhallLevel', 0) for m in members if m.get('townhallLevel')])
+    opp_th_summary = ", ".join([f"TH{th}: {count}" for th, count in sorted(opp_th_levels.items(), reverse=True)])
+
+    prompt = f"""
+    Lu adalah Niki, Analis Perang Esports CoC.
+    Tugas lu menganalisis pertahanan klan musuh berdasarkan roster Town Hall mereka yang ikut war/CWL.
+
+    Data Musuh:
+    - Nama Clan: {opponent.get('name')}
+    - Roster Town Hall: {opp_th_summary if opp_th_summary else "Data TH disembunyikan / tidak sinkron."}
+
+    Format Output:
+    ⚔️ **Intel Roster Lawan — {opponent.get('name')}**
+    ⚖️ **Analisis Bobot Perang:** [Analisis logis apakah roster mereka berat di Top-TH atau merata]
+    🎯 **Strategi Eksekusi Target:** [Saran tegas ke member kita, misal: "Pastikan TH15 sapu bersih TH14 musuh", dll]
+    ⚠️ **Titik Kritis:** [Peringatan untuk member agar tidak blunder salah pilih musuh]
+    """
 
     client = genai.Client(api_key=api_key)
     return await _generate_with_fallback(client, prompt)
 
 async def run_war_strategy(guild_id: str, war_data: dict) -> str:
     api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        return "❌ API Key AI belum dikonfigurasi."
+    if not api_key: return "❌ API Key AI belum dikonfigurasi."
 
     config, err_msg = _check_pro_access(guild_id)
-    if err_msg:
-        return err_msg
+    if err_msg: return err_msg
 
     if not war_data or war_data.get('state') not in ['inWar', 'preparation']:
-        return "🛡️ Clan sedang tidak dalam persiapan war atau perang aktif."
+        return "🛡️ Clan sedang tidak dalam perang aktif atau CWL."
 
     clan = war_data.get('clan', {})
     opponent = war_data.get('opponent', {})
     
     context = (
-        f"WAR DATA:\n"
-        f"Status: {war_data.get('state')}\n"
-        f"Clan Kita ({clan.get('name')}): {clan.get('stars')} Bintang, {clan.get('destructionPercentage')}% Destruction\n"
-        f"Lawan ({opponent.get('name')}): {opponent.get('stars')} Bintang, {opponent.get('destructionPercentage')}% Destruction\n"
-        f"Jumlah Pemain Per Perang: {war_data.get('teamSize')} vs {war_data.get('teamSize')}\n"
+        f"WAR DATA:\nStatus: {war_data.get('state')}\n"
+        f"Kita ({clan.get('name')}): {clan.get('stars')} Bintang, {clan.get('destructionPercentage')}% Dest\n"
+        f"Lawan ({opponent.get('name')}): {opponent.get('stars')} Bintang, {opponent.get('destructionPercentage')}% Dest\n"
+        f"Serangan Terpakai: {clan.get('attacks', 0)} (Kita) vs {opponent.get('attacks', 0)} (Lawan)\n"
     )
 
     prompt = (
-        "Lu adalah Niki, War Strategist CoC yang humble.\n"
-        "Berdasarkan kondisi agregat perang di bawah ini, berikan saran taktik rotasi serangan secara objektif:\n\n"
+        "Lu adalah Niki, War Strategist CoC.\n"
+        "Berikan evaluasi taktik rotasi serangan secara objektif di tengah perang berjalan:\n\n"
         f"{context}\n\n"
         "Beri format respons:\n"
-        "1. ⚔️ **Analisis Posisi War** (Siapa yang unggul)\n"
-        "2. 🎯 **Fokus Strategi Clan** (Kapan harus mirror, kapan harus clean-up bawah)\n"
-        "3. 📢 **Draf Pesan Broadcast Chat In-Game** (Pesan pendek suportif untuk Leader ke chat CoC)"
+        "1. ⚔️ **Status Posisi** (Siapa yang lagi mendominasi dari skor & efisiensi serang)\n"
+        "2. 🎯 **Taktik Bertahan/Menyerang** (Apakah fokus nabung attack buat akhir, clean-up bintang kecil, atau hajar atas)\n"
+        "3. 📢 **Pesan Tempur In-Game** (1 kalimat tajam buat Leader copas ke chat klan)"
     )
 
     client = genai.Client(api_key=api_key)
     return await _generate_with_fallback(client, prompt)
 
-async def run_visual_strategy(guild_id: str, image_bytes: bytes, detail_pasukan: str = None) -> str:
+async def run_ai_report(guild_id: str, latest_war_log: dict) -> str:
     api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        return "❌ API Key AI belum dikonfigurasi."
+    if not api_key: return "❌ API Key AI belum dikonfigurasi."
 
     config, err_msg = _check_pro_access(guild_id)
-    if err_msg:
-        return err_msg
+    if err_msg: return err_msg
 
-    info_pasukan = f"\nINFO PASUKAN / EQUIPMENT ATTACKER:\n{detail_pasukan}\n" if detail_pasukan else ""
+    if not latest_war_log:
+        return "🛡️ Tidak ada data histori perang (War Log) yang bisa dianalisis."
 
-    prompt = (
-        "Lu adalah Niki, War Strategist Clash of Clans yang humble dan suportif.\n"
-        "Leader baru saja mengirimkan screenshot base lawan yang akan diserang."
-        f"{info_pasukan}\n"
-        "Analisis gambar base tersebut (dan pertimbangkan info pasukan/equipment jika dicantumkan). Format respons:\n"
-        "1. 🏰 **Analisis Base Lawan** (Titik lemah, posisi Town Hall, Eagle Artillery, Inferno, Monolith, dll)\n"
-        "2. 🎯 **Rekomendasi Entry Point & Taktik** (Saran eksekusi terbaik menggunakan meta terkini atau pasukan yang dimiliki)\n"
-        "3. 📢 **Saran Eksekusi Hero & Spell** (Tips timing skill hero/equipment dan pemakaian spell)"
+    clan = latest_war_log.get('clan', {})
+    opponent = latest_war_log.get('opponent', {})
+    result = latest_war_log.get('result', 'unknown')
+
+    context = (
+        f"REPORT PASCA-WAR:\n"
+        f"Hasil: Kita {result} melawan {opponent.get('name')}\n"
+        f"Skor Akhir: {clan.get('stars')}⭐ ({clan.get('destructionPercentage')}%) VS {opponent.get('stars')}⭐ ({opponent.get('destructionPercentage')}%)\n"
+        f"Total Serangan Dipakai: {clan.get('attacks', 0)}\n"
     )
 
+    prompt = f"""
+    Lu adalah Niki, Esports Analyst Clash of Clans.
+    Buat ulasan pasca-pertandingan (Post-Match Report) dari data ini:
+    {context}
+
+    Format Output:
+    📝 **Laporan Intel Pasca-Perang**
+    🏆 **Review Pertandingan:** [Ulas dengan tajam kenapa kita Menang/Kalah/Seri berdasarkan statistik bintang & destruksi tersebut]
+    💡 **Evaluasi Eksekusi:** [Berikan 2 baris evaluasi teknis yang masuk akal terkait efisiensi pemakaian jatah serangan]
+    🎯 **Saran Untuk War Berikutnya:** [1 kalimat saran latihan atau disiplin untuk member]
+    """
+
     client = genai.Client(api_key=api_key)
-    contents = [types.Part.from_bytes(data=image_bytes, mime_type='image/jpeg'), prompt]
-    return await _generate_with_fallback(client, contents)
+    return await _generate_with_fallback(client, prompt)
 
 async def run_ai_screen(guild_id: str, player_data: dict) -> str:
     api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        return "❌ API Key AI belum dikonfigurasi."
+    if not api_key: return "❌ API Key AI belum dikonfigurasi."
 
     config, err_msg = _check_pro_access(guild_id)
-    if err_msg:
-        return err_msg
+    if err_msg: return err_msg
 
     name = player_data.get('name', 'Unknown')
     tag = player_data.get('tag', '')
@@ -180,64 +216,20 @@ async def run_ai_screen(guild_id: str, player_data: dict) -> str:
     received = player_data.get('donationsReceived', 0)
     war_stars = player_data.get('warStars', 0)
     heroes = player_data.get('heroes', [])
-    equipment = player_data.get('heroEquipment', [])
 
     hero_info = ", ".join([f"{h['name']} (Lv {h['level']})" for h in heroes if h.get('village') == 'home'])
-    equip_info = ", ".join([f"{e['name']} (Lv {e['level']})" for e in equipment])[:200] + "..." if equipment else "Tidak ada data"
 
     prompt = f"""
-    Kamu adalah Niki, AI Assistant Clan Clash of Clans.
-    Tugasmu: Analisis mendalam profil calon member baru.
-    Gaya bahasa: Santai, humble, singkat, padat, dan jelas. JANGAN gunakan kata "beban". Berikan evaluasi objektif.
-
-    Data Player:
-    - Nama: {name} ({tag})
-    - Town Hall: {th}
-    - Donasi Diberikan: {donations} | Diterima: {received}
-    - Total War Stars: {war_stars}
-    - Level Hero Utama: {hero_info}
-    - Hero Equipment Aktif: {equip_info}
-
-    Format Output (Gunakan Markdown):
-    🔍 **Intel Rekrutmen — {name}** (TH {th})
-    • **Loyalitas & Donasi:** [Analisis ringkas rasio donasi]
-    • **Kekuatan Tempur:** [Analisis level hero vs max TH tersebut & equipment-nya, apakah rushed atau matang]
-    • **Jam Terbang War:** [Analisis dari total war stars]
+    Kamu AI Rekrutmen Clan. Analisis profil ini:\n
+    Nama: {name} | TH: {th} | War Stars: {war_stars}\n
+    Donasi Keluar: {donations} | Masuk: {received}\n
+    Level Hero: {hero_info}\n
     
-    📌 **Verdict Akhir:** [Pilih salah satu: 🟢 GASS TERIMA / ⚠️ PANTAU DULU / 🔴 SKIP AJA]
-    💬 *Catatan Khusus Niki:* [1-2 kalimat saran taktis untuk Leader/Co-Leader jika menerima player ini]
-    """
-
-    client = genai.Client(api_key=api_key)
-    return await _generate_with_fallback(client, prompt)
-
-async def run_ai_scout(guild_id: str, war_data: dict) -> str:
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        return "❌ API Key AI belum dikonfigurasi."
-
-    config, err_msg = _check_pro_access(guild_id)
-    if err_msg:
-        return err_msg
-
-    opponent = war_data.get('opponent', {})
-    members = opponent.get('members', [])
-    
-    prompt = f"""
-    Kamu adalah Niki, AI Assistant Clan Clash of Clans.
-    Tugasmu: Analisis susunan base musuh saat war.
-    Gaya bahasa: Santai, humble, singkat, padat, dan jelas.
-
-    Data Lawan:
-    - Nama Clan: {opponent.get('name')}
-    - Tag: {opponent.get('tag')}
-    - Jumlah Member War: {len(members)}
-
-    Format Output (Gunakan Markdown):
-    ⚔️ **Intel War Lawan — {opponent.get('name')}**
-    🎯 **Target Empuk:** [1-2 kalimat sebutkan ciri base/TH lawan yang gampang diratakan secara umum]
-    ⚠️ **Waspada:** [1-2 kalimat sebutkan ciri base lawan yang pertahanannya max]
-    💡 **Taktik Niki:** [1 kalimat saran komposisi pasukan secara umum]
+    Output:\n
+    🔍 **Intel Rekrutmen — {name}** (TH {th})\n
+    • **Rasio Donasi:** [Analisis pelit/dermawan]\n
+    • **Kematangan Akun:** [Apakah level hero sesuai dengan standar TH tersebut atau prematur]\n
+    📌 **Verdict Akhir:** [🟢 GASS TERIMA / ⚠️ PANTAU DULU / 🔴 TOLAK]
     """
 
     client = genai.Client(api_key=api_key)
@@ -245,57 +237,33 @@ async def run_ai_scout(guild_id: str, war_data: dict) -> str:
 
 async def run_ai_opponent(guild_id: str, clan_tag: str, war_data: dict) -> str:
     api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        return "❌ API Key AI belum dikonfigurasi."
+    if not api_key: return "❌ API Key AI belum dikonfigurasi."
 
     config, err_msg = _check_pro_access(guild_id)
-    if err_msg:
-        return err_msg
+    if err_msg: return err_msg
 
     opponent = war_data.get('opponent', {})
     opp_tag = opponent.get('tag')
     
-    db = get_db()
-    history_data = []
-    try:
-        histories = db.query(WarHistory).filter(WarHistory.clan_tag == clan_tag).order_by(WarHistory.id.desc()).limit(5).all()
-        for h in histories:
-            history_data.append(f"- Lawan {h.opponent_name}: {h.result} ({h.stars} Bintang, {h.destruction_percentage}%)")
-    finally:
-        db.close()
-
     from services.coc_client import CoCClient
     coc_client = CoCClient()
     opp_info = await coc_client.get_clan_info(opp_tag)
 
     context = f"""
-    DATA PERANG SAAT INI:
-    Klan Kita: {war_data.get('clan', {}).get('name')}
-    Lawan: {opponent.get('name')} ({opp_tag})
+    Klan Kita vs {opponent.get('name')} ({opp_tag})
     Ukuran Tim: {war_data.get('teamSize')} vs {war_data.get('teamSize')}
     Level Klan Lawan: {opp_info.get('clanLevel', 'N/A') if opp_info else 'N/A'}
     Win Streak Lawan: {opp_info.get('warWinStreak', 0) if opp_info else 'N/A'}
     Total War Won Lawan: {opp_info.get('warWins', 0) if opp_info else 'N/A'}
-    
-    HISTORI 5 WAR TERAKHIR KLAN KITA:
-    {chr(10).join(history_data) if history_data else 'Belum ada riwayat tercatat.'}
     """
 
     prompt = f"""
-    Kamu adalah Niki, AI Tactical Analyst Clash of Clans tingkat Esports.
-    Tugasmu: Berikan analisis mendalam mengenai kekuatan klan lawan dan estimasi persentase peluang menang klan kita.
-    Gaya bahasa: Objektif, analitik tajam, humble, dan membangun semangat tempur. JANGAN ragu menyatakan jika lawan terlalu berat.
-
-    {context}
-
-    Format Output (Gunakan Markdown Discord):
-    🎯 **Scouting Intel Lawan — {opponent.get('name')}**
-    • **Kekuatan Lawan:** [Analisis ringkas kekuatan lawan dari Win Streak, War Wins, dan Level Clan]
-    • **Peluang Menang:** [Sebutkan estimasi persentase, contoh: "Sekitar 65%". Berikan alasan rasional berdasarkan histori klan kita vs kekuatan lawan]
-
-    💡 **Rekomendasi Taktis Fase Prep Day:**
-    1. [Saran eksekusi target (misal: "Disiplin mirror dulu" atau "Prioritaskan clean-up bottom half")]
-    2. [Catatan disiplin attack untuk member]
+    Kamu analis intelijen war. Baca statistik klan musuh ini:\n{context}\n
+    Output:\n
+    🎯 **Intel Lawan — {opponent.get('name')}**\n
+    • **Ancaman Musuh:** [Analisis seberapa pro musuh berdasarkan level dan win streak mereka]\n
+    • **Estimasi Peluang Menang:** [Berapa persen klan kita bisa menang secara teoretis, dan jelaskan argumen singkatnya]\n
+    💡 **Sikap Prep Day:** [1 kalimat wejangan mental agar member tidak meremehkan musuh]
     """
 
     client = genai.Client(api_key=api_key)
