@@ -128,7 +128,6 @@ class Capital(commands.Cog):
 
         encoded_tag = urllib.parse.quote(clan_tag)
         
-        # 1. Ambil Data Member Klan Saat Ini
         clan_info = await self.fetch_coc_api(f"/clans/{encoded_tag}")
         if not clan_info or 'memberList' not in clan_info:
             return await interaction.followup.send("❌ Gagal mengambil data clan.")
@@ -136,7 +135,6 @@ class Capital(commands.Cog):
         all_members = {m['tag']: m['name'] for m in clan_info['memberList']}
         clan_name = clan_info.get('name', 'Clan')
 
-        # 2. Ambil Data Raid
         raid_data = await self.fetch_coc_api(f"/clans/{encoded_tag}/capitalraidseasons")
         if not raid_data or "items" not in raid_data or not raid_data["items"]:
             return await interaction.followup.send("❌ Data Raid Weekend tidak ditemukan.")
@@ -144,18 +142,17 @@ class Capital(commands.Cog):
         latest_raid = raid_data["items"][0]
         raid_members = {m['tag']: m for m in latest_raid.get("members", [])}
         
-        # 3. Proses Data untuk CSV
         csv_data = []
-        csv_data.append(["Nama Member", "Status Raid", "Serangan Terpakai", "Maksimal Serangan", "Loot Diperoleh"])
+        csv_data.append(["Nama Member", "Status Raid", "Serangan Terpakai", "Maksimal Serangan", "Sisa Serangan", "Loot Diperoleh"])
         
         for tag, name in all_members.items():
             if tag not in raid_members:
-                # Ada di klan, tapi tidak ada di data raid sama sekali
-                csv_data.append([name, "Belum Attack", 0, 5, 0])
+                csv_data.append([name, "Belum Attack", 0, 5, 5, 0])
             else:
                 rm = raid_members[tag]
                 attacks = rm.get("attacks", 0)
                 max_attacks = rm.get("attackLimit", 5) + rm.get("bonusAttackLimit", 0)
+                sisa_attacks = max_attacks - attacks
                 loot = rm.get("capitalResourcesLooted", 0)
 
                 if attacks == 0:
@@ -165,22 +162,27 @@ class Capital(commands.Cog):
                 else:
                     status = "Max Attack"
                     
-                csv_data.append([name, status, attacks, max_attacks, loot])
+                csv_data.append([name, status, attacks, max_attacks, sisa_attacks, loot])
 
-        # Urutkan CSV berdasarkan status
         status_order = {"Belum Attack": 1, "Sudah Attack": 2, "Max Attack": 3}
-        csv_data[1:] = sorted(csv_data[1:], key=lambda x: (status_order[x[1]], -x[4]))
+        sorted_rows = sorted(csv_data[1:], key=lambda x: (status_order[x[1]], -x[5]))
+        
+        final_csv_data = [csv_data[0]] + sorted_rows
 
-        # 4. Buat File CSV dengan utf-8-sig (BOM) agar Excel bisa membaca karakter Jepang/Aneh
+        final_csv_data.append([])
+        final_csv_data.append(["*CATATAN SISTEM:"])
+        final_csv_data.append(["1. Jatah serangan awal setiap member adalah 5."])
+        final_csv_data.append(["2. Member mendapat bonus +1 serangan (Maksimal 6) jika berhasil meratakan 1 distrik lawan."])
+        final_csv_data.append(["3. Member yang 'Belum Attack' akan selalu tertulis maksimal serangannya 5 karena belum memicu bonus."])
+
         csv_buffer = io.StringIO()
         csv_writer = csv.writer(csv_buffer)
-        csv_writer.writerows(csv_data)
+        csv_writer.writerows(final_csv_data)
         
         file_bytes = io.BytesIO(csv_buffer.getvalue().encode('utf-8-sig'))
         filename = f"Raid_Rekap_{clan_name.replace(' ', '_')}.csv"
         discord_file = discord.File(fp=file_bytes, filename=filename)
 
-        # 5. Proses Data untuk Discord UI (Top 10)
         sorted_participants = sorted(latest_raid.get("members", []), key=lambda x: x.get("capitalResourcesLooted", 0), reverse=True)[:10]
 
         table_lines = []
@@ -201,7 +203,11 @@ class Capital(commands.Cog):
 
         embed = discord.Embed(
             title=f"⚔️ TOP 10 RAID WEEKEND",
-            description=f"**{clan_name}** • Perolehan loot sesi terakhir.\n\nUnduh file **CSV** di bawah untuk merekap status seluruh member *(Belum Attack, Sudah Attack, Max Attack)*.",
+            description=(
+                f"**{clan_name}** • Perolehan loot sesi terakhir.\n\n"
+                f"Unduh file **CSV** di bawah untuk merekap detail status sisa serangan seluruh member.\n\n"
+                f"📌 **Info CoC:** *Jatah awal serangan adalah 5. Member mendapat bonus +1 (Max 6) jika meratakan distrik.*"
+            ),
             color=discord.Color.blurple()
         )
         embed.add_field(name="───────────", value=table_content, inline=False)
