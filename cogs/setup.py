@@ -25,11 +25,9 @@ class SetupCommands(commands.Cog):
     async def setup_clan(self, interaction: discord.Interaction, clan_tag: str, alert_channel: discord.TextChannel = None):
         await interaction.response.defer()
         
-        # --- AUTO-FIX HASHTAG CLAN TAG ---
         clan_tag = clan_tag.strip().upper()
         if not clan_tag.startswith("#"):
             clan_tag = f"#{clan_tag}"
-        # ---------------------------------
 
         clan_data = await self.coc.get_clan_info(clan_tag)
         if not clan_data or 'name' not in clan_data:
@@ -104,6 +102,63 @@ class SetupCommands(commands.Cog):
             await interaction.followup.send("❌ Gagal mengupdate lisensi di database.")
         finally:
             db.close()
+
+    @app_commands.command(name="broadcast-promo", description="[OWNER ONLY] Broadcast pesan promo ke server free yang belum pernah trial")
+    @app_commands.describe(promo_text="Teks isi pengumuman atau promo yang ingin dikirim")
+    async def broadcast_promo(self, interaction: discord.Interaction, promo_text: str):
+        if str(interaction.user.id) != self._get_owner_id():
+            return await interaction.response.send_message("❌ Command ini khusus Owner Ixiera!", ephemeral=True)
+
+        await interaction.response.defer(ephemeral=True)
+        
+        db = get_db()
+        try:
+            eligible_configs = db.query(ServerConfig).filter(
+                ServerConfig.tier.ilike('free'),
+                ServerConfig.expired_at == None
+            ).all()
+            
+            eligible_guild_ids = [config.guild_id for config in eligible_configs]
+        finally:
+            db.close()
+
+        if not eligible_guild_ids:
+            return await interaction.followup.send("❌ Tidak ada server free yang memenuhi syarat (semua sudah pernah trial/pro).")
+
+        success_count = 0
+        failed_count = 0
+
+        for guild_id_str in eligible_guild_ids:
+            guild = self.bot.get_guild(int(guild_id_str))
+            if not guild:
+                continue
+
+            target_channel = guild.system_channel
+            if not target_channel or not target_channel.permissions_for(guild.me).send_messages:
+                target_channel = next((channel for channel in guild.text_channels if channel.permissions_for(guild.me).send_messages), None)
+
+            if target_channel:
+                try:
+                    embed = discord.Embed(
+                        title="🎁 Penawaran Spesial Niki System!",
+                        description=promo_text,
+                        color=discord.Color.brand_green()
+                    )
+                    embed.set_footer(text="ixiera.id — Operating System Studio | Abaikan pesan ini jika tidak berminat.")
+                    
+                    await target_channel.send(embed=embed)
+                    success_count += 1
+                except Exception:
+                    failed_count += 1
+            else:
+                failed_count += 1
+
+        await interaction.followup.send(
+            f"✅ **Broadcast Selesai!**\n"
+            f"Berhasil terkirim: **{success_count}** server.\n"
+            f"Gagal/Tidak ada akses channel: **{failed_count}** server.",
+            ephemeral=True
+        )
 
 async def setup(bot):
     await bot.add_cog(SetupCommands(bot))
