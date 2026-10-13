@@ -151,37 +151,37 @@ class Capital(commands.Cog):
         for tag, name in all_members.items():
             if tag not in raid_members:
                 # Ada di klan, tapi tidak ada di data raid sama sekali
-                csv_data.append([name, "Belum Menyerang", 0, 5, 0])
+                csv_data.append([name, "Belum Attack", 0, 5, 0])
             else:
                 rm = raid_members[tag]
                 attacks = rm.get("attacks", 0)
                 max_attacks = rm.get("attackLimit", 5) + rm.get("bonusAttackLimit", 0)
-                loot = rm.get("capitalLoot", 0)
+                loot = rm.get("capitalResourcesLooted", 0)
 
                 if attacks == 0:
-                    status = "Belum Menyerang"
+                    status = "Belum Attack"
                 elif attacks < max_attacks:
-                    status = "Sisa Serangan"
+                    status = "Sudah Attack"
                 else:
-                    status = "Sudah Max"
+                    status = "Max Attack"
                     
                 csv_data.append([name, status, attacks, max_attacks, loot])
 
-        # Urutkan CSV berdasarkan status (Belum -> Sisa -> Max)
-        status_order = {"Belum Menyerang": 1, "Sisa Serangan": 2, "Sudah Max": 3}
+        # Urutkan CSV berdasarkan status
+        status_order = {"Belum Attack": 1, "Sudah Attack": 2, "Max Attack": 3}
         csv_data[1:] = sorted(csv_data[1:], key=lambda x: (status_order[x[1]], -x[4]))
 
-        # 4. Buat File CSV
+        # 4. Buat File CSV dengan utf-8-sig (BOM) agar Excel bisa membaca karakter Jepang/Aneh
         csv_buffer = io.StringIO()
         csv_writer = csv.writer(csv_buffer)
         csv_writer.writerows(csv_data)
         
-        file_bytes = io.BytesIO(csv_buffer.getvalue().encode('utf-8'))
+        file_bytes = io.BytesIO(csv_buffer.getvalue().encode('utf-8-sig'))
         filename = f"Raid_Rekap_{clan_name.replace(' ', '_')}.csv"
         discord_file = discord.File(fp=file_bytes, filename=filename)
 
         # 5. Proses Data untuk Discord UI (Top 10)
-        sorted_participants = sorted(latest_raid.get("members", []), key=lambda x: x.get("capitalLoot", 0), reverse=True)[:10]
+        sorted_participants = sorted(latest_raid.get("members", []), key=lambda x: x.get("capitalResourcesLooted", 0), reverse=True)[:10]
 
         table_lines = []
         table_lines.append("#  Nama           Atk  Loot")
@@ -193,7 +193,7 @@ class Capital(commands.Cog):
                 name = name[:10] + ".."
             attacks = m.get("attacks", 0)
             max_attacks = m.get("attackLimit", 5) + m.get("bonusAttackLimit", 0)
-            loot = m.get("capitalLoot", 0)
+            loot = m.get("capitalResourcesLooted", 0)
             
             table_lines.append(f"{idx:<2} {name:<14} {attacks}/{max_attacks}  {loot:>6,}")
 
@@ -201,7 +201,7 @@ class Capital(commands.Cog):
 
         embed = discord.Embed(
             title=f"⚔️ TOP 10 RAID WEEKEND",
-            description=f"**{clan_name}** • Perolehan loot sesi terakhir.\n\nUnduh file **CSV** di bawah untuk merekap status seluruh member *(Belum Nyerang, Sisa Serangan, Sudah Max)*.",
+            description=f"**{clan_name}** • Perolehan loot sesi terakhir.\n\nUnduh file **CSV** di bawah untuk merekap status seluruh member *(Belum Attack, Sudah Attack, Max Attack)*.",
             color=discord.Color.blurple()
         )
         embed.add_field(name="───────────", value=table_content, inline=False)
