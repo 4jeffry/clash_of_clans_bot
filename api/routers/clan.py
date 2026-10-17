@@ -100,7 +100,8 @@ def get_top_donations(server = Depends(get_active_server), db: Session = Depends
             "name": m.name,
             "role": m.role,
             "donations": m.donations,
-            "donations_received": m.donations_received
+            "donations_received": m.donations_received,
+            "townhall_level": m.townhall_level
         } for m in top_donors
     ]
 
@@ -117,6 +118,7 @@ def get_inactive_members(server = Depends(get_active_server), db: Session = Depe
             "name": m.name,
             "role": m.role,
             "donations": m.donations,
-            "last_updated": m.last_updated
+            "last_updated": m.last_updated,
+            "townhall_level": m.townhall_level
         } for m in inactive
     ]
