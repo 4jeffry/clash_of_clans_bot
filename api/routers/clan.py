@@ -276,7 +276,8 @@ def get_recap_war(server = Depends(get_active_server), db: Session = Depends(get
         })
 
     # Urutkan berdasarkan total bintang tertinggi
-    result.sort(key=lambda x: (x['total_stars'], x['total_destruction']), reverse=True)
+    # Sortir berdasarkan TH tertinggi dulu, kalau sama baru lihat Map Position
+    result.sort(key=lambda x: (-x['th'], x['map_pos']))
     
     return {
         "opponent": last_war.opponent_name,
