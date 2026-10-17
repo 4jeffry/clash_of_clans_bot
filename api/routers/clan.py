@@ -410,3 +410,50 @@ def get_race_cwl(server = Depends(get_active_server), db: Session = Depends(get_
     defense.sort(key=lambda x: (x['stars_given'], x['destruction_given']))
 
     return {"offense": offense, "defense": defense, "war_state": active_war.state}
+
+# --- REWARD MANAGEMENT ---
+from pydantic import BaseModel
+from models import RaceReward
+import datetime
+
+class RewardPayload(BaseModel):
+    player_tag: str
+    reward_note: str
+
+@router.get("/rewards")
+def get_rewards(server = Depends(get_active_server), db: Session = Depends(get_db)):
+    # Ambil history reward, join dengan nama member
+    rewards = db.query(RaceReward).filter(RaceReward.scope_type == 'clan').order_by(desc(RaceReward.claimed_at)).limit(50).all()
+    
+    # Karena tabel RaceReward nggak nyimpen nama, kita map manual dengan tabel ClanMember
+    members = {m.tag: m.name for m in db.query(ClanMember).filter(ClanMember.clan_tag == server.clan_tag).all()}
+    
+    result = []
+    for r in rewards:
+        name = members.get(r.player_tag, "Unknown")
+        result.append({
+            "id": r.id,
+            "player_tag": r.player_tag,
+            "name": name,
+            "note": r.reward_note,
+            "date": r.claimed_at
+        })
+    return result
+
+@router.post("/rewards")
+def give_reward(payload: RewardPayload, server = Depends(get_active_server), db: Session = Depends(get_db)):
+    # Validasi member ada di klan
+    member = db.query(ClanMember).filter(ClanMember.clan_tag == server.clan_tag, ClanMember.tag == payload.player_tag).first()
+    if not member:
+        return {"error": "Member tidak ditemukan di clan ini."}
+        
+    new_reward = RaceReward(
+        scope_type='clan',
+        scope_id=0, # Dummy ID karena kita filter by clan_tag lewat member tag
+        player_tag=payload.player_tag,
+        reward_note=payload.reward_note,
+        claimed_at=datetime.datetime.utcnow()
+    )
+    db.add(new_reward)
+    db.commit()
+    return {"success": True, "message": "Reward berhasil dicatat."}
