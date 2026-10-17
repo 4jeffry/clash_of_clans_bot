@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 import httpx
 import jwt
+import os
 import logging
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -27,6 +28,28 @@ def has_manage_permission(guild: dict) -> bool:
         return False
     return bool(perms & 0x20) or bool(perms & 0x8)
 
+async def fetch_and_save_badge(db: Session, server: ServerConfig):
+    """Fetch logo dari API CoC dan simpan ke DB kalau belum ada."""
+    if server.clan_badge_url:
+        return
+        
+    token = os.getenv('COC_API_TOKEN')
+    if not token:
+        return
+        
+    tag = server.clan_tag.replace('#', '%23')
+    url = f"https://cocproxy.royaleapi.dev/v1/clans/{tag}"
+    
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            res = await client.get(url, headers={'Authorization': f'Bearer {token}'})
+            if res.status_code == 200:
+                data = res.json()
+                server.clan_badge_url = data.get('badgeUrls', {}).get('medium')
+                db.commit()
+    except Exception as e:
+        logger.error(f"Gagal fetch badge untuk {server.clan_tag}: {e}")
+
 @router.post("/discord")
 async def discord_callback(payload: CodePayload, db: Session = Depends(get_db)):
     if not settings.DISCORD_CLIENT_ID or not settings.DISCORD_CLIENT_SECRET:
@@ -47,51 +70,32 @@ async def discord_callback(payload: CodePayload, db: Session = Depends(get_db)):
             data=data,
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
-        
-        # Jika gagal, lempar error text asli dari Discord ke frontend
         if token_res.status_code != 200:
-            logger.error(f"Discord token error: {token_res.text}")
             raise HTTPException(status_code=400, detail=f"Discord error: {token_res.text}")
             
         token_data = token_res.json()
         access_token = token_data.get("access_token")
-        if not access_token:
-            raise HTTPException(status_code=400, detail="No access token from Discord")
 
-        user_res = await client.get(
-            "https://discord.com/api/users/@me",
-            headers={"Authorization": f"Bearer {access_token}"},
-        )
-        if user_res.status_code != 200:
-            raise HTTPException(status_code=400, detail="Failed to fetch Discord user")
+        user_res = await client.get("https://discord.com/api/users/@me", headers={"Authorization": f"Bearer {access_token}"})
         user = user_res.json()
 
-        guilds_res = await client.get(
-            "https://discord.com/api/users/@me/guilds",
-            headers={"Authorization": f"Bearer {access_token}"},
-        )
-        if guilds_res.status_code != 200:
-            raise HTTPException(status_code=400, detail="Failed to fetch user guilds")
+        guilds_res = await client.get("https://discord.com/api/users/@me/guilds", headers={"Authorization": f"Bearer {access_token}"})
         guilds = guilds_res.json()
 
     admin_guild_ids = [str(g["id"]) for g in guilds if has_manage_permission(g)]
 
     configured_servers = []
     if admin_guild_ids:
-        rows = (
-            db.query(ServerConfig)
-            .filter(ServerConfig.guild_id.in_(admin_guild_ids))
-            .all()
-        )
-        configured_servers = [
-            {
+        rows = db.query(ServerConfig).filter(ServerConfig.guild_id.in_(admin_guild_ids)).all()
+        for s in rows:
+            await fetch_and_save_badge(db, s) # Auto fetch logo
+            configured_servers.append({
                 "guild_id": s.guild_id,
                 "clan_tag": s.clan_tag,
+                "clan_badge_url": s.clan_badge_url,
                 "tier": s.tier or "free",
                 "expired_at": s.expired_at.isoformat() if s.expired_at else None,
-            }
-            for s in rows
-        ]
+            })
 
     exp = datetime.utcnow() + timedelta(days=settings.JWT_EXPIRE_DAYS)
     jwt_payload = {
@@ -106,12 +110,7 @@ async def discord_callback(payload: CodePayload, db: Session = Depends(get_db)):
 
     return {
         "access_token": access_jwt,
-        "user": {
-            "id": user["id"],
-            "username": user.get("username"),
-            "global_name": user.get("global_name"),
-            "avatar": user.get("avatar"),
-        },
+        "user": {"id": user["id"], "username": user.get("username"), "global_name": user.get("global_name"), "avatar": user.get("avatar")},
         "servers": configured_servers,
     }
 
@@ -121,22 +120,17 @@ async def get_me(user: dict = Depends(get_current_user), db: Session = Depends(g
     server_ids = user.get("servers") or []
     if server_ids:
         rows = db.query(ServerConfig).filter(ServerConfig.guild_id.in_(server_ids)).all()
-        servers = [
-            {
+        for s in rows:
+            await fetch_and_save_badge(db, s) # Auto fetch logo kalau kosong
+            servers.append({
                 "guild_id": s.guild_id,
                 "clan_tag": s.clan_tag,
+                "clan_badge_url": s.clan_badge_url,
                 "tier": s.tier or "free",
                 "expired_at": s.expired_at.isoformat() if s.expired_at else None,
-            }
-            for s in rows
-        ]
+            })
 
     return {
-        "user": {
-            "id": user["sub"],
-            "username": user.get("username"),
-            "global_name": user.get("global_name"),
-            "avatar": user.get("avatar"),
-        },
+        "user": {"id": user["sub"], "username": user.get("username"), "global_name": user.get("global_name"), "avatar": user.get("avatar")},
         "servers": servers,
     }

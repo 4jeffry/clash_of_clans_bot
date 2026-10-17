@@ -9,6 +9,7 @@ class ServerConfig(Base):
     __tablename__ = 'server_configs'
     guild_id = Column(String, primary_key=True)
     clan_tag = Column(String, nullable=False)
+    clan_badge_url = Column(String, nullable=True)
     setup_by = Column(String)
     tier = Column(String, default="free")
     alert_channel_id = Column(String, nullable=True)

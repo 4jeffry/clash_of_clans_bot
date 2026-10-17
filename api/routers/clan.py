@@ -11,10 +11,12 @@ def get_current_war(server = Depends(get_active_server), db: Session = Depends(g
     # Ambil data war terbaru dari DB
     current_war = db.query(War).filter(War.clan_tag == server.clan_tag).order_by(desc(War.id)).first()
     if not current_war:
-        return {"state": "notInWar", "message": "Belum ada data war di database."}
+        return {"state": "notInWar", "message": "Belum ada data war di database.", "clan_badge_url": server.clan_badge_url}
     
     return {
         "state": current_war.state,
+        "clan_badge_url": server.clan_badge_url,
+        "clan_badge_url": server.clan_badge_url,
         "opponent_name": current_war.opponent_name,
         "opponent_tag": current_war.opponent_tag,
         "team_size": current_war.team_size,
