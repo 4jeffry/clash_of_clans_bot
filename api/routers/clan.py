@@ -342,3 +342,71 @@ def get_recap_cwl(server = Depends(get_active_server), db: Session = Depends(get
         "season": season.month,
         "data": result
     }
+
+# --- ENDPOINT TH COMPOSITION ---
+@router.get("/th-composition")
+def get_th_composition(server = Depends(get_active_server), db: Session = Depends(get_db)):
+    # Ambil war terakhir
+    last_war = db.query(War).filter(War.clan_tag == server.clan_tag).order_by(desc(War.id)).first()
+    if not last_war:
+        return {"error": "Belum ada data War."}
+    
+    participants = db.query(WarParticipant).filter(WarParticipant.war_id == last_war.id).all()
+    if not participants:
+        return {"error": "Tidak ada partisipan di war terakhir."}
+        
+    # Hitung jumlah per TH
+    comp = {}
+    for p in participants:
+        th = p.townhall_level or 0
+        if th not in comp:
+            comp[th] = 0
+        comp[th] += 1
+        
+    # Format jadi array dan urutkan dari TH tertinggi
+    result = [{"th": k, "count": v} for k, v in comp.items() if k > 0]
+    result.sort(key=lambda x: x["th"], reverse=True)
+    
+    return {
+        "opponent": last_war.opponent_name,
+        "data": result
+    }
+
+# --- ENDPOINT RACE CWL ---
+@router.get("/racecwl")
+def get_race_cwl(server = Depends(get_active_server), db: Session = Depends(get_db)):
+    # Ambil war CWL terakhir yang lagi jalan
+    active_war = db.query(War).filter(War.clan_tag == server.clan_tag, War.is_cwl == True).order_by(desc(War.id)).first()
+    if not active_war:
+        return {"error": "Belum ada data CWL di database."}
+    
+    participants = db.query(WarParticipant).filter(WarParticipant.war_id == active_war.id).all()
+    
+    offense = []
+    defense = []
+    for p in participants:
+        attacks = db.query(WarAttack).filter(WarAttack.war_id == active_war.id, WarAttack.attacker_tag == p.player_tag).all()
+        total_stars = sum(a.stars for a in attacks) if attacks else 0
+        total_dest = sum(a.destruction_percentage for a in attacks) if attacks else 0
+        
+        offense.append({
+            "name": p.player_name,
+            "th": p.townhall_level,
+            "atk_used": len(attacks),
+            "atk_max": p.attacks_allowed,
+            "stars": total_stars,
+            "destruction": total_dest
+        })
+        
+        defense.append({
+            "name": p.player_name,
+            "th": p.townhall_level,
+            "defended_count": p.opp_attacks_count,
+            "stars_given": p.best_opp_stars,
+            "destruction_given": float(p.best_opp_destruction or 0)
+        })
+
+    offense.sort(key=lambda x: (x['stars'], x['destruction']), reverse=True)
+    defense.sort(key=lambda x: (x['stars_given'], x['destruction_given']))
+
+    return {"offense": offense, "defense": defense, "war_state": active_war.state}
