@@ -1,11 +1,11 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-from sqlalchemy import desc
-import httpx
+from sqlalchemy import desc, func
+from api.deps import get_active_server, get_db
+from models import War, ClanMember, WarHistory, CapitalRaid, CapitalParticipant, WarParticipant
 import os
 import urllib.parse
-from api.deps import get_active_server, get_db
-from models import War, ClanMember, WarHistory, CapitalRaid, CapitalParticipant
+import httpx
 
 router = APIRouter()
 COC_TOKEN = os.getenv('COC_API_TOKEN')
@@ -17,69 +17,88 @@ async def fetch_coc(endpoint: str):
         res = await client.get(url, headers={"Authorization": f"Bearer {COC_TOKEN}"})
         return res.json() if res.status_code == 200 else None
 
+# --- ENDPOINT BARU: LEADERBOARD ---
+@router.get("/leaderboard")
+def get_leaderboard(server = Depends(get_active_server), db: Session = Depends(get_db)):
+    # Ambil top 10 donatur dari tabel members
+    donors = db.query(ClanMember).filter(ClanMember.clan_tag == server.clan_tag).order_by(desc(ClanMember.donations)).limit(10).all()
+    return [{"name": m.name, "townhall": m.townhall_level, "score": m.donations, "type": "Donasi"} for m in donors]
+
+# --- ENDPOINT BARU: RACE WAR ---
+@router.get("/racewar")
+def get_race_war(server = Depends(get_active_server), db: Session = Depends(get_db)):
+    # Cari war aktif terakhir
+    active_war = db.query(War).filter(War.clan_tag == server.clan_tag).order_by(desc(War.id)).first()
+    if not active_war:
+        return {"error": "Belum ada data War di database."}
+    
+    # Ambil partisipan war tersebut
+    participants = db.query(WarParticipant).filter(WarParticipant.war_id == active_war.id).all()
+    
+    offense = []
+    defense = []
+    
+    for p in participants:
+        # Offense: Attack yang dipakai & bintang didapat
+        offense.append({
+            "name": p.player_name,
+            "th": p.townhall_level,
+            "atk_used": p.attacks_used,
+            "atk_max": p.attacks_allowed,
+            "stars": p.best_opp_stars, # Untuk sementara pakai ini, atau akumulasi dari WarAttack
+            "destruction": float(p.best_opp_destruction or 0)
+        })
+        
+        # Defense: Berapa kali diserang dan bintang yang diberikan ke lawan
+        defense.append({
+            "name": p.player_name,
+            "th": p.townhall_level,
+            "defended_count": p.opp_attacks_count,
+            "stars_given": p.best_opp_stars,
+            "destruction_given": float(p.best_opp_destruction or 0)
+        })
+
+    # Sortir
+    offense.sort(key=lambda x: (x['stars'], x['destruction']), reverse=True)
+    defense.sort(key=lambda x: (x['stars_given'], x['destruction_given']))
+
+    return {"offense": offense, "defense": defense, "war_state": active_war.state}
+
+# --- Endpoint DB Lama ---
 @router.get("/capital")
-async def get_capital_info(server = Depends(get_active_server)):
-    encoded_tag = urllib.parse.quote(server.clan_tag)
-    data = await fetch_coc(f"/clans/{encoded_tag}/capitalraidseasons")
-    if not data or "items" not in data or not data["items"]:
-        return {"error": "Data Clan Capital tidak ditemukan."}
-    latest = data["items"][0]
-    return {
-        "total_loot": latest.get('capitalTotalLoot', 0),
-        "total_attacks": latest.get('totalAttacks', 0),
-        "districts_destroyed": latest.get('enemyDistrictsDestroyed', 0),
-        "defensive_rewards": latest.get('defensiveReward', 0),
-        "completed_raids": latest.get('raidsCompleted', 0),
-        "state": latest.get('state', 'ended')
-    }
+def get_capital_info(server = Depends(get_active_server), db: Session = Depends(get_db)):
+    raid = db.query(CapitalRaid).filter(CapitalRaid.clan_tag == server.clan_tag).order_by(desc(CapitalRaid.id)).first()
+    if not raid: return {"error": "Belum ada data Raid."}
+    return {"total_loot": raid.total_loot, "total_attacks": raid.total_attacks, "districts_destroyed": raid.districts_destroyed, "defensive_rewards": raid.defensive_rewards, "completed_raids": raid.raids_completed, "state": raid.state}
 
 @router.get("/capitaldonations")
-async def get_capital_donations(server = Depends(get_active_server)):
-    encoded_tag = urllib.parse.quote(server.clan_tag)
-    data = await fetch_coc(f"/clans/{encoded_tag}")
-    if not data or "memberList" not in data:
-        return []
-    members = sorted(data["memberList"], key=lambda x: x.get("clanCapitalContributions", 0), reverse=True)[:10]
-    return [{"name": m.get('name', 'Unknown'), "townhall": m.get('townHallLevel', 0), "contributions": m.get("clanCapitalContributions", 0)} for m in members]
+def get_capital_donations(server = Depends(get_active_server), db: Session = Depends(get_db)):
+    latest = db.query(CapitalRaid).filter(CapitalRaid.clan_tag == server.clan_tag).order_by(desc(CapitalRaid.id)).first()
+    if not latest: return []
+    parts = db.query(CapitalParticipant).filter(CapitalParticipant.raid_id == latest.id).order_by(desc(CapitalParticipant.contributions)).limit(10).all()
+    return [{"name": p.player_name, "townhall": p.townhall_level, "contributions": p.contributions} for p in parts]
 
-# --- ENDPOINT BARU: RAID STATS ---
 @router.get("/raidstats")
 async def get_raid_stats(server = Depends(get_active_server)):
     encoded_tag = urllib.parse.quote(server.clan_tag)
     clan_data = await fetch_coc(f"/clans/{encoded_tag}")
     raid_data = await fetch_coc(f"/clans/{encoded_tag}/capitalraidseasons")
-
-    if not clan_data or "memberList" not in clan_data or not raid_data or "items" not in raid_data or not raid_data["items"]:
-        return []
-
+    if not clan_data or "memberList" not in clan_data or not raid_data or "items" not in raid_data or not raid_data["items"]: return []
     all_members = {m['tag']: m['name'] for m in clan_data['memberList']}
     latest_raid = raid_data["items"][0]
     raid_members = {m['tag']: m for m in latest_raid.get("members", [])}
-
     result = []
     for tag, name in all_members.items():
         if tag not in raid_members:
             result.append({"name": name, "status": "Belum Attack", "attacks": 0, "max_attacks": 5, "loot": 0})
         else:
             rm = raid_members[tag]
-            attacks = rm.get("attacks", 0)
-            max_attacks = rm.get("attackLimit", 5) + rm.get("bonusAttackLimit", 0)
-            loot = rm.get("capitalResourcesLooted", 0)
-            
-            if attacks == 0:
-                status = "Belum Attack"
-            elif attacks < max_attacks:
-                status = "Sudah Attack"
-            else:
-                status = "Max Attack"
-                
+            attacks, max_attacks, loot = rm.get("attacks", 0), rm.get("attackLimit", 5) + rm.get("bonusAttackLimit", 0), rm.get("capitalResourcesLooted", 0)
+            status = "Belum Attack" if attacks == 0 else ("Sudah Attack" if attacks < max_attacks else "Max Attack")
             result.append({"name": name, "status": status, "attacks": attacks, "max_attacks": max_attacks, "loot": loot})
-
-    status_order = {"Belum Attack": 1, "Sudah Attack": 2, "Max Attack": 3}
-    result.sort(key=lambda x: (status_order[x['status']], -x['loot']))
+    result.sort(key=lambda x: ({"Belum Attack": 1, "Sudah Attack": 2, "Max Attack": 3}[x['status']], -x['loot']))
     return result
 
-# --- Endpoint DB Lama ---
 @router.get("/war")
 def get_current_war(server = Depends(get_active_server), db: Session = Depends(get_db)):
     w = db.query(War).filter(War.clan_tag == server.clan_tag).order_by(desc(War.id)).first()
