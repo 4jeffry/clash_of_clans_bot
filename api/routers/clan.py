@@ -422,11 +422,18 @@ class RewardPayload(BaseModel):
 
 @router.get("/rewards")
 def get_rewards(server = Depends(get_active_server), db: Session = Depends(get_db)):
-    # Ambil history reward, join dengan nama member
-    rewards = db.query(RaceReward).filter(RaceReward.scope_type == 'clan').order_by(desc(RaceReward.claimed_at)).limit(50).all()
+    # 1. Ambil semua member di clan ini
+    members_data = db.query(ClanMember).filter(ClanMember.clan_tag == server.clan_tag).all()
+    members = {m.tag: m.name for m in members_data}
+    member_tags = list(members.keys())
     
-    # Karena tabel RaceReward nggak nyimpen nama, kita map manual dengan tabel ClanMember
-    members = {m.tag: m.name for m in db.query(ClanMember).filter(ClanMember.clan_tag == server.clan_tag).all()}
+    if not member_tags:
+        return []
+
+    # 2. Ambil reward berdasarkan player_tag yang ada di clan ini (gak peduli scope_type-nya apa)
+    rewards = db.query(RaceReward).filter(
+        RaceReward.player_tag.in_(member_tags)
+    ).order_by(desc(RaceReward.claimed_at)).limit(50).all()
     
     result = []
     for r in rewards:
@@ -436,6 +443,7 @@ def get_rewards(server = Depends(get_active_server), db: Session = Depends(get_d
             "player_tag": r.player_tag,
             "name": name,
             "note": r.reward_note,
+            "scope": r.scope_type,
             "date": r.claimed_at
         })
     return result
