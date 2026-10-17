@@ -59,3 +59,30 @@ def get_members(server = Depends(get_active_server), db: Session = Depends(get_d
             "last_updated": m.last_updated
         } for m in members
     ]
+
+@router.get("/cwl")
+def get_cwl_history(server = Depends(get_active_server), db: Session = Depends(get_db)):
+    # Ambil data war yang is_cwl = True
+    cwl_wars = db.query(War).filter(
+        War.clan_tag == server.clan_tag, 
+        War.is_cwl == True
+    ).order_by(desc(War.start_time)).limit(10).all()
+    
+    if not cwl_wars:
+        return []
+        
+    return [
+        {
+            "id": w.id,
+            "opponent_name": w.opponent_name,
+            "opponent_tag": w.opponent_tag,
+            "state": w.state,
+            "result": w.result,
+            "clan_stars": w.clan_stars,
+            "clan_destruction": float(w.clan_destruction or 0),
+            "opp_stars": w.opp_stars,
+            "opp_destruction": float(w.opp_destruction or 0),
+            "start_time": w.start_time,
+            "end_time": w.end_time
+        } for w in cwl_wars
+    ]
