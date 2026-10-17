@@ -165,3 +165,25 @@ class AIReport(Base):
     __table_args__ = (
         UniqueConstraint('clan_tag', 'kind', 'ref_key', name='uq_ai_report'),
     )
+
+class CapitalRaid(Base):
+    __tablename__ = 'capital_raids'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    clan_tag = Column(String(20), nullable=False)
+    state = Column(String(20))
+    total_loot = Column(Integer, default=0)
+    total_attacks = Column(Integer, default=0)
+    districts_destroyed = Column(Integer, default=0)
+    defensive_rewards = Column(Integer, default=0)
+    raids_completed = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+class CapitalParticipant(Base):
+    __tablename__ = 'capital_participants'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    raid_id = Column(Integer, ForeignKey('capital_raids.id', ondelete='CASCADE'))
+    player_tag = Column(String(20), nullable=False)
+    player_name = Column(String(100))
+    townhall_level = Column(Integer)
+    contributions = Column(Integer, default=0)
+    attacks_used = Column(Integer, default=0)
