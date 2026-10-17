@@ -8,7 +8,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from services.db import get_db
-from models import ServerConfig
+from models import ServerConfig, CapitalRaid, CapitalParticipant
 
 class Capital(commands.Cog):
     def __init__(self, bot):
@@ -38,23 +38,67 @@ class Capital(commands.Cog):
     @app_commands.command(name="capital", description="[FREE] Ringkasan statistik Clan Capital Raid Weekend terakhir")
     async def capital(self, interaction: discord.Interaction):
         await interaction.response.defer()
-        
+
         clan_tag = self.get_clan_tag(interaction.guild_id)
-        if not clan_tag:
+        if not clan_tag: 
             return await interaction.followup.send("❌ Server ini belum terhubung ke clan CoC! Jalankan `/setup` terlebih dahulu.")
 
         encoded_tag = urllib.parse.quote(clan_tag)
         data = await self.fetch_coc_api(f"/clans/{encoded_tag}/capitalraidseasons")
-        
+        clan_data = await self.fetch_coc_api(f"/clans/{encoded_tag}")
+
         if not data or "items" not in data or not data["items"]:
             return await interaction.followup.send("❌ Data Clan Capital tidak ditemukan atau log Raid Weekend belum tersedia.")
-
+        
         latest_raid = data["items"][0]
         total_loot = latest_raid.get('capitalTotalLoot', 0)
         total_attacks = latest_raid.get('totalAttacks', 0)
         districts_destroyed = latest_raid.get('enemyDistrictsDestroyed', 0)
         defensive_rewards = latest_raid.get('defensiveReward', 0)
         completed_raids = latest_raid.get('raidsCompleted', 0)
+
+        # --- PROSES SIMPAN KE DATABASE ---
+        db = get_db()
+        try:
+            latest_db_raid = db.query(CapitalRaid).filter(CapitalRaid.clan_tag == clan_tag).order_by(CapitalRaid.id.desc()).first()
+            
+            # Cek apakah ini data Raid yang sama (biar gak duplikat tiap command dipanggil)
+            if latest_db_raid and latest_db_raid.total_loot == total_loot and latest_db_raid.total_attacks == total_attacks:
+                latest_db_raid.state = latest_raid.get('state', 'ended')
+                db.commit()
+            else:
+                # Simpan Raid baru
+                new_raid = CapitalRaid(
+                    clan_tag=clan_tag,
+                    state=latest_raid.get('state', 'ended'),
+                    total_loot=total_loot,
+                    total_attacks=total_attacks,
+                    districts_destroyed=districts_destroyed,
+                    defensive_rewards=defensive_rewards,
+                    raids_completed=completed_raids
+                )
+                db.add(new_raid)
+                db.commit()
+                db.refresh(new_raid)
+                
+                # Simpan Partisipan (Top Donatur)
+                if clan_data and "memberList" in clan_data:
+                    for m in clan_data["memberList"]:
+                        participant = CapitalParticipant(
+                            raid_id=new_raid.id,
+                            player_tag=m['tag'],
+                            player_name=m['name'],
+                            townhall_level=m.get('townHallLevel', 0),
+                            contributions=m.get("clanCapitalContributions", 0)
+                        )
+                        db.add(participant)
+                    db.commit()
+        except Exception as e:
+            db.rollback()
+            print(f"[DB ERROR] Gagal simpan data raid: {e}")
+        finally:
+            db.close()
+        # --- SELESAI SIMPAN ---
 
         box_content = (
             f"```text\n"
@@ -79,33 +123,33 @@ class Capital(commands.Cog):
     @app_commands.command(name="capitaldonations", description="[FREE] Top 10 donatur kontribusi Capital Gold di clan")
     async def capitaldonations(self, interaction: discord.Interaction):
         await interaction.response.defer()
-        
+
         clan_tag = self.get_clan_tag(interaction.guild_id)
         if not clan_tag:
             return await interaction.followup.send("❌ Server belum terhubung ke clan! Gunakan `/setup`.")
 
         encoded_tag = urllib.parse.quote(clan_tag)
         clan_data = await self.fetch_coc_api(f"/clans/{encoded_tag}")
-        
+
         if not clan_data or "memberList" not in clan_data:
             return await interaction.followup.send("❌ Gagal mengambil data member clan dari API.")
-
+        
         members = clan_data["memberList"]
         sorted_members = sorted(members, key=lambda x: x.get("clanCapitalContributions", 0), reverse=True)[:10]
-
+        
         table_lines = []
         table_lines.append("#  Nama           TH   Kontribusi Gold")
         table_lines.append("───────────────────────────────────────")
-        
+
         for idx, m in enumerate(sorted_members, 1):
             name = m.get('name', 'Unknown')
             if len(name) > 12:
                 name = name[:10] + ".."
             th = m.get('townHallLevel', 0)
             gold = m.get("clanCapitalContributions", 0)
-            
-            table_lines.append(f"{idx:<2} {name:<14} {th:<4} {gold:>10,}")
 
+            table_lines.append(f"{idx:<2} {name:<14} {th:<4} {gold:>10,}")
+        
         table_content = "```text\n" + "\n".join(table_lines) + "\n```"
 
         embed = discord.Embed(
@@ -115,23 +159,23 @@ class Capital(commands.Cog):
         )
         embed.add_field(name="───────────", value=table_content, inline=False)
         embed.set_footer(text="ixiera.id — Operating System Studio")
-        
+
         await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="raidstats", description="[FREE] Cek Top 10 partisipan Raid & Unduh CSV Rekap Full Member")
     async def raidstats(self, interaction: discord.Interaction):
         await interaction.response.defer()
-        
+
         clan_tag = self.get_clan_tag(interaction.guild_id)
         if not clan_tag:
             return await interaction.followup.send("❌ Server belum terhubung ke clan! Gunakan `/setup`.")
 
         encoded_tag = urllib.parse.quote(clan_tag)
-        
+
         clan_info = await self.fetch_coc_api(f"/clans/{encoded_tag}")
         if not clan_info or 'memberList' not in clan_info:
             return await interaction.followup.send("❌ Gagal mengambil data clan.")
-        
+
         all_members = {m['tag']: m['name'] for m in clan_info['memberList']}
         clan_name = clan_info.get('name', 'Clan')
 
@@ -141,10 +185,10 @@ class Capital(commands.Cog):
 
         latest_raid = raid_data["items"][0]
         raid_members = {m['tag']: m for m in latest_raid.get("members", [])}
-        
+
         csv_data = []
         csv_data.append(["Nama Member", "Status Raid", "Serangan Terpakai", "Maksimal Serangan", "Sisa Serangan", "Loot Diperoleh"])
-        
+
         for tag, name in all_members.items():
             if tag not in raid_members:
                 csv_data.append([name, "Belum Attack", 0, 5, 5, 0])
@@ -161,14 +205,14 @@ class Capital(commands.Cog):
                     status = "Sudah Attack"
                 else:
                     status = "Max Attack"
-                    
+                
                 csv_data.append([name, status, attacks, max_attacks, sisa_attacks, loot])
-
+        
         status_order = {"Belum Attack": 1, "Sudah Attack": 2, "Max Attack": 3}
         sorted_rows = sorted(csv_data[1:], key=lambda x: (status_order[x[1]], -x[5]))
-        
-        final_csv_data = [csv_data[0]] + sorted_rows
 
+        final_csv_data = [csv_data[0]] + sorted_rows
+        
         final_csv_data.append([])
         final_csv_data.append(["*CATATAN SISTEM:"])
         final_csv_data.append(["1. Jatah serangan awal setiap member adalah 5."])
@@ -180,15 +224,16 @@ class Capital(commands.Cog):
         csv_writer.writerows(final_csv_data)
         
         file_bytes = io.BytesIO(csv_buffer.getvalue().encode('utf-8-sig'))
+        
         filename = f"Raid_Rekap_{clan_name.replace(' ', '_')}.csv"
         discord_file = discord.File(fp=file_bytes, filename=filename)
 
         sorted_participants = sorted(latest_raid.get("members", []), key=lambda x: x.get("capitalResourcesLooted", 0), reverse=True)[:10]
-
+        
         table_lines = []
         table_lines.append("#  Nama           Atk  Loot")
         table_lines.append("────────────────────────────────")
-
+    
         for idx, m in enumerate(sorted_participants, 1):
             name = m.get('name', 'Unknown')
             if len(name) > 12:
@@ -196,11 +241,11 @@ class Capital(commands.Cog):
             attacks = m.get("attacks", 0)
             max_attacks = m.get("attackLimit", 5) + m.get("bonusAttackLimit", 0)
             loot = m.get("capitalResourcesLooted", 0)
-            
+
             table_lines.append(f"{idx:<2} {name:<14} {attacks}/{max_attacks}  {loot:>6,}")
-
+        
         table_content = "```text\n" + "\n".join(table_lines) + "\n```"
-
+        
         embed = discord.Embed(
             title=f"⚔️ TOP 10 RAID WEEKEND",
             description=(
@@ -212,7 +257,7 @@ class Capital(commands.Cog):
         )
         embed.add_field(name="───────────", value=table_content, inline=False)
         embed.set_footer(text="ixiera.id — Operating System Studio")
-        
+
         await interaction.followup.send(embed=embed, file=discord_file)
 
 async def setup(bot):
