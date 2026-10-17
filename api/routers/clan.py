@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, func
 from api.deps import get_active_server, get_db
-from models import War, ClanMember, WarHistory, CapitalRaid, CapitalParticipant, WarParticipant
+from models import War, ClanMember, WarHistory, CapitalRaid, CapitalParticipant, WarParticipant, WarAttack, WarParticipant
 import os
 import urllib.parse
 import httpx
@@ -129,3 +129,64 @@ def get_inactive(server = Depends(get_active_server), db: Session = Depends(get_
 def get_cwl(server = Depends(get_active_server), db: Session = Depends(get_db)):
     w = db.query(War).filter(War.clan_tag == server.clan_tag, War.is_cwl == True).order_by(desc(War.start_time)).limit(10).all()
     return [{"id": x.id, "opponent_name": x.opponent_name, "opponent_tag": x.opponent_tag, "state": x.state, "result": x.result, "clan_stars": x.clan_stars, "clan_destruction": float(x.clan_destruction or 0), "opp_stars": x.opp_stars, "opp_destruction": float(x.opp_destruction or 0), "start_time": x.start_time, "end_time": x.end_time} for x in w]
+
+@router.get("/member/{player_tag}")
+def get_member_detail(player_tag: str, server = Depends(get_active_server), db: Session = Depends(get_db)):
+    # Format tag (ganti # jadi %23)
+    formatted_tag = urllib.parse.quote(player_tag)
+    
+    # 1. Ambil dari DB lokal (ClanMember)
+    member = db.query(ClanMember).filter(
+        ClanMember.clan_tag == server.clan_tag,
+        ClanMember.tag == formatted_tag
+    ).first()
+    
+    if not member:
+        # Coba cari tanpa %23 kalau format dari frontend beda
+        member = db.query(ClanMember).filter(
+            ClanMember.clan_tag == server.clan_tag,
+            ClanMember.tag == player_tag
+        ).first()
+        
+    if not member:
+        return {"error": "Member tidak ditemukan di database."}
+        
+    # 2. Hitung stats War terakhir (dari WarParticipant)
+    # Ambil war ID terakhir
+    last_war = db.query(War).filter(War.clan_tag == server.clan_tag).order_by(desc(War.id)).first()
+    
+    war_stats = {"stars": 0, "destruction": 0, "attacks_used": 0, "attacks_allowed": 2}
+    if last_war:
+        wp = db.query(WarParticipant).filter(
+            WarParticipant.war_id == last_war.id,
+            WarParticipant.player_tag == member.tag
+        ).first()
+        if wp:
+            # Total stars dari WarAttack (jika ada) atau dari best_opp_stars
+            # Kita pakai akumulasi dari WarAttack untuk akurasi
+            attacks = db.query(WarAttack).filter(
+                WarAttack.war_id == last_war.id,
+                WarAttack.attacker_tag == member.tag
+            ).all()
+            
+            total_stars = sum(a.stars for a in attacks) if attacks else 0
+            total_dest = sum(a.destruction_percentage for a in attacks) if attacks else 0
+            # Rata-rata destruction per attack
+            avg_dest = total_dest / len(attacks) if attacks else 0
+            
+            war_stats = {
+                "stars": total_stars,
+                "destruction": round(avg_dest, 1),
+                "attacks_used": len(attacks),
+                "attacks_allowed": wp.attacks_allowed
+            }
+
+    return {
+        "tag": member.tag,
+        "name": member.name,
+        "role": member.role,
+        "townhall_level": member.townhall_level,
+        "donations": member.donations,
+        "donations_received": member.donations_received,
+        "war_stats": war_stats
+    }
