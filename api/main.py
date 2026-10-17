@@ -29,7 +29,5 @@ def health():
     return {"status": "healthy"}
 
 
-# Nanti di sini kita include_router untuk auth, clan, war, dll
-# from api.routers import auth, clan, war
-# app.include_router(auth.router, prefix="/auth", tags=["auth"])
-# app.include_router(clan.router, prefix="/clan", tags=["clan"])
+from api.routers import auth
+app.include_router(auth.router, prefix="/auth", tags=["auth"])
