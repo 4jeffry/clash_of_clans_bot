@@ -86,3 +86,37 @@ def get_cwl_history(server = Depends(get_active_server), db: Session = Depends(g
             "end_time": w.end_time
         } for w in cwl_wars
     ]
+
+@router.get("/donations")
+def get_top_donations(server = Depends(get_active_server), db: Session = Depends(get_db)):
+    # Ambil Top 5 donatur tertinggi
+    top_donors = db.query(ClanMember).filter(
+        ClanMember.clan_tag == server.clan_tag
+    ).order_by(desc(ClanMember.donations)).limit(5).all()
+    
+    return [
+        {
+            "tag": m.tag,
+            "name": m.name,
+            "role": m.role,
+            "donations": m.donations,
+            "donations_received": m.donations_received
+        } for m in top_donors
+    ]
+
+@router.get("/inactive")
+def get_inactive_members(server = Depends(get_active_server), db: Session = Depends(get_db)):
+    # Ambil 10 member dengan donasi terendah (indikasi pasif)
+    inactive = db.query(ClanMember).filter(
+        ClanMember.clan_tag == server.clan_tag
+    ).order_by(ClanMember.donations).limit(10).all()
+    
+    return [
+        {
+            "tag": m.tag,
+            "name": m.name,
+            "role": m.role,
+            "donations": m.donations,
+            "last_updated": m.last_updated
+        } for m in inactive
+    ]
