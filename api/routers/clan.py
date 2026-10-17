@@ -1,34 +1,85 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
+import httpx
+import os
+import urllib.parse
 from api.deps import get_active_server, get_db
 from models import War, ClanMember, WarHistory, CapitalRaid, CapitalParticipant
 
 router = APIRouter()
+COC_TOKEN = os.getenv('COC_API_TOKEN')
+
+async def fetch_coc(endpoint: str):
+    if not COC_TOKEN: return None
+    url = f"https://cocproxy.royaleapi.dev/v1{endpoint}"
+    async with httpx.AsyncClient() as client:
+        res = await client.get(url, headers={"Authorization": f"Bearer {COC_TOKEN}"})
+        return res.json() if res.status_code == 200 else None
 
 @router.get("/capital")
-def get_capital_info(server = Depends(get_active_server), db: Session = Depends(get_db)):
-    raid = db.query(CapitalRaid).filter(CapitalRaid.clan_tag == server.clan_tag).order_by(desc(CapitalRaid.id)).first()
-    if not raid:
-        return {"error": "Belum ada data Raid Weekend di database."}
+async def get_capital_info(server = Depends(get_active_server)):
+    encoded_tag = urllib.parse.quote(server.clan_tag)
+    data = await fetch_coc(f"/clans/{encoded_tag}/capitalraidseasons")
+    if not data or "items" not in data or not data["items"]:
+        return {"error": "Data Clan Capital tidak ditemukan."}
+    latest = data["items"][0]
     return {
-        "total_loot": raid.total_loot,
-        "total_attacks": raid.total_attacks,
-        "districts_destroyed": raid.districts_destroyed,
-        "defensive_rewards": raid.defensive_rewards,
-        "completed_raids": raid.raids_completed,
-        "state": raid.state
+        "total_loot": latest.get('capitalTotalLoot', 0),
+        "total_attacks": latest.get('totalAttacks', 0),
+        "districts_destroyed": latest.get('enemyDistrictsDestroyed', 0),
+        "defensive_rewards": latest.get('defensiveReward', 0),
+        "completed_raids": latest.get('raidsCompleted', 0),
+        "state": latest.get('state', 'ended')
     }
 
 @router.get("/capitaldonations")
-def get_capital_donations(server = Depends(get_active_server), db: Session = Depends(get_db)):
-    latest_raid = db.query(CapitalRaid).filter(CapitalRaid.clan_tag == server.clan_tag).order_by(desc(CapitalRaid.id)).first()
-    if not latest_raid:
+async def get_capital_donations(server = Depends(get_active_server)):
+    encoded_tag = urllib.parse.quote(server.clan_tag)
+    data = await fetch_coc(f"/clans/{encoded_tag}")
+    if not data or "memberList" not in data:
         return []
-    
-    participants = db.query(CapitalParticipant).filter(CapitalParticipant.raid_id == latest_raid.id).order_by(desc(CapitalParticipant.contributions)).limit(10).all()
-    return [{"name": p.player_name, "townhall": p.townhall_level, "contributions": p.contributions} for p in participants]
+    members = sorted(data["memberList"], key=lambda x: x.get("clanCapitalContributions", 0), reverse=True)[:10]
+    return [{"name": m.get('name', 'Unknown'), "townhall": m.get('townHallLevel', 0), "contributions": m.get("clanCapitalContributions", 0)} for m in members]
 
+# --- ENDPOINT BARU: RAID STATS ---
+@router.get("/raidstats")
+async def get_raid_stats(server = Depends(get_active_server)):
+    encoded_tag = urllib.parse.quote(server.clan_tag)
+    clan_data = await fetch_coc(f"/clans/{encoded_tag}")
+    raid_data = await fetch_coc(f"/clans/{encoded_tag}/capitalraidseasons")
+
+    if not clan_data or "memberList" not in clan_data or not raid_data or "items" not in raid_data or not raid_data["items"]:
+        return []
+
+    all_members = {m['tag']: m['name'] for m in clan_data['memberList']}
+    latest_raid = raid_data["items"][0]
+    raid_members = {m['tag']: m for m in latest_raid.get("members", [])}
+
+    result = []
+    for tag, name in all_members.items():
+        if tag not in raid_members:
+            result.append({"name": name, "status": "Belum Attack", "attacks": 0, "max_attacks": 5, "loot": 0})
+        else:
+            rm = raid_members[tag]
+            attacks = rm.get("attacks", 0)
+            max_attacks = rm.get("attackLimit", 5) + rm.get("bonusAttackLimit", 0)
+            loot = rm.get("capitalResourcesLooted", 0)
+            
+            if attacks == 0:
+                status = "Belum Attack"
+            elif attacks < max_attacks:
+                status = "Sudah Attack"
+            else:
+                status = "Max Attack"
+                
+            result.append({"name": name, "status": status, "attacks": attacks, "max_attacks": max_attacks, "loot": loot})
+
+    status_order = {"Belum Attack": 1, "Sudah Attack": 2, "Max Attack": 3}
+    result.sort(key=lambda x: (status_order[x['status']], -x['loot']))
+    return result
+
+# --- Endpoint DB Lama ---
 @router.get("/war")
 def get_current_war(server = Depends(get_active_server), db: Session = Depends(get_db)):
     w = db.query(War).filter(War.clan_tag == server.clan_tag).order_by(desc(War.id)).first()
