@@ -241,3 +241,45 @@ def compare_members(tag1: str, tag2: str, server = Depends(get_active_server), d
         "player1": get_stats(formatted_tag1) or get_stats(tag1),
         "player2": get_stats(formatted_tag2) or get_stats(tag2)
     }
+
+@router.get("/recap-war")
+def get_recap_war(server = Depends(get_active_server), db: Session = Depends(get_db)):
+    # Ambil war terakhir (bisa war aktif atau yang udah selesai)
+    last_war = db.query(War).filter(War.clan_tag == server.clan_tag).order_by(desc(War.id)).first()
+    if not last_war:
+        return {"error": "Belum ada data War di database."}
+
+    participants = db.query(WarParticipant).filter(WarParticipant.war_id == last_war.id).all()
+    
+    result = []
+    for p in participants:
+        # Ambil semua attack dari player ini di war ini
+        attacks = db.query(WarAttack).filter(
+            WarAttack.war_id == last_war.id,
+            WarAttack.attacker_tag == p.player_tag
+        ).order_by(WarAttack.order_num).all()
+
+        # Hitung total
+        total_stars = sum(a.stars for a in attacks) if attacks else 0
+        total_dest = sum(a.destruction_percentage for a in attacks) if attacks else 0
+
+        result.append({
+            "name": p.player_name,
+            "th": p.townhall_level,
+            "map_pos": p.map_position,
+            "attacks_used": len(attacks),
+            "attacks_allowed": p.attacks_allowed,
+            "total_stars": total_stars,
+            "total_destruction": total_dest,
+            "war_state": last_war.state,
+            "opponent": last_war.opponent_name
+        })
+
+    # Urutkan berdasarkan total bintang tertinggi
+    result.sort(key=lambda x: (x['total_stars'], x['total_destruction']), reverse=True)
+    
+    return {
+        "opponent": last_war.opponent_name,
+        "state": last_war.state,
+        "data": result
+    }
