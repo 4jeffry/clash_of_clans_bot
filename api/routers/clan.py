@@ -190,3 +190,54 @@ def get_member_detail(player_tag: str, server = Depends(get_active_server), db: 
         "donations_received": member.donations_received,
         "war_stats": war_stats
     }
+
+@router.get("/compare")
+def compare_members(tag1: str, tag2: str, server = Depends(get_active_server), db: Session = Depends(get_db)):
+    formatted_tag1 = urllib.parse.quote(tag1)
+    formatted_tag2 = urllib.parse.quote(tag2)
+    
+    def get_stats(player_tag):
+        member = db.query(ClanMember).filter(
+            ClanMember.clan_tag == server.clan_tag,
+            ClanMember.tag == player_tag
+        ).first()
+        if not member:
+            return None
+            
+        last_war = db.query(War).filter(War.clan_tag == server.clan_tag).order_by(desc(War.id)).first()
+        war_stats = {"stars": 0, "destruction": 0, "attacks_used": 0, "attacks_allowed": 2}
+        
+        if last_war:
+            wp = db.query(WarParticipant).filter(
+                WarParticipant.war_id == last_war.id,
+                WarParticipant.player_tag == member.tag
+            ).first()
+            if wp:
+                attacks = db.query(WarAttack).filter(
+                    WarAttack.war_id == last_war.id,
+                    WarAttack.attacker_tag == member.tag
+                ).all()
+                total_stars = sum(a.stars for a in attacks) if attacks else 0
+                total_dest = sum(a.destruction_percentage for a in attacks) if attacks else 0
+                avg_dest = total_dest / len(attacks) if attacks else 0
+                
+                war_stats = {
+                    "stars": total_stars,
+                    "destruction": round(avg_dest, 1),
+                    "attacks_used": len(attacks),
+                    "attacks_allowed": wp.attacks_allowed
+                }
+
+        return {
+            "tag": member.tag,
+            "name": member.name,
+            "townhall_level": member.townhall_level,
+            "donations": member.donations,
+            "donations_received": member.donations_received,
+            "war_stats": war_stats
+        }
+
+    return {
+        "player1": get_stats(formatted_tag1) or get_stats(tag1),
+        "player2": get_stats(formatted_tag2) or get_stats(tag2)
+    }
