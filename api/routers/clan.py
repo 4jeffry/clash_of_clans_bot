@@ -1,50 +1,33 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
-import httpx
-import os
-import urllib.parse
 from api.deps import get_active_server, get_db
-from models import War, ClanMember, WarHistory
+from models import War, ClanMember, WarHistory, CapitalRaid, CapitalParticipant
 
 router = APIRouter()
-COC_TOKEN = os.getenv('COC_API_TOKEN')
-
-async def fetch_coc(endpoint: str):
-    if not COC_TOKEN: return None
-    url = f"https://cocproxy.royaleapi.dev/v1{endpoint}"
-    async with httpx.AsyncClient() as client:
-        res = await client.get(url, headers={"Authorization": f"Bearer {COC_TOKEN}"})
-        return res.json() if res.status_code == 200 else None
 
 @router.get("/capital")
-async def get_capital_info(server = Depends(get_active_server)):
-    encoded_tag = urllib.parse.quote(server.clan_tag)
-    data = await fetch_coc(f"/clans/{encoded_tag}/capitalraidseasons")
-    
-    if not data or "items" not in data or not data["items"]:
-        return {"error": "Data Clan Capital tidak ditemukan."}
-        
-    latest = data["items"][0]
+def get_capital_info(server = Depends(get_active_server), db: Session = Depends(get_db)):
+    raid = db.query(CapitalRaid).filter(CapitalRaid.clan_tag == server.clan_tag).order_by(desc(CapitalRaid.id)).first()
+    if not raid:
+        return {"error": "Belum ada data Raid Weekend di database."}
     return {
-        "total_loot": latest.get('capitalTotalLoot', 0),
-        "total_attacks": latest.get('totalAttacks', 0),
-        "districts_destroyed": latest.get('enemyDistrictsDestroyed', 0),
-        "defensive_rewards": latest.get('defensiveReward', 0),
-        "completed_raids": latest.get('raidsCompleted', 0),
-        "state": latest.get('state', 'ended')
+        "total_loot": raid.total_loot,
+        "total_attacks": raid.total_attacks,
+        "districts_destroyed": raid.districts_destroyed,
+        "defensive_rewards": raid.defensive_rewards,
+        "completed_raids": raid.raids_completed,
+        "state": raid.state
     }
 
 @router.get("/capitaldonations")
-async def get_capital_donations(server = Depends(get_active_server)):
-    encoded_tag = urllib.parse.quote(server.clan_tag)
-    data = await fetch_coc(f"/clans/{encoded_tag}")
-    
-    if not data or "memberList" not in data:
+def get_capital_donations(server = Depends(get_active_server), db: Session = Depends(get_db)):
+    latest_raid = db.query(CapitalRaid).filter(CapitalRaid.clan_tag == server.clan_tag).order_by(desc(CapitalRaid.id)).first()
+    if not latest_raid:
         return []
-        
-    members = sorted(data["memberList"], key=lambda x: x.get("clanCapitalContributions", 0), reverse=True)[:10]
-    return [{"name": m.get('name', 'Unknown'), "townhall": m.get('townHallLevel', 0), "contributions": m.get("clanCapitalContributions", 0)} for m in members]
+    
+    participants = db.query(CapitalParticipant).filter(CapitalParticipant.raid_id == latest_raid.id).order_by(desc(CapitalParticipant.contributions)).limit(10).all()
+    return [{"name": p.player_name, "townhall": p.townhall_level, "contributions": p.contributions} for p in participants]
 
 @router.get("/war")
 def get_current_war(server = Depends(get_active_server), db: Session = Depends(get_db)):
