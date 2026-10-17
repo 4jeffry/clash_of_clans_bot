@@ -1,20 +1,22 @@
 from datetime import datetime, timedelta
 import httpx
 import jwt
+import logging
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from typing import Optional
 from sqlalchemy.orm import Session
 
 from api.config import settings
 from api.deps import get_db, get_current_user
 from models import ServerConfig
 
+logger = logging.getLogger("api.auth")
 router = APIRouter()
-
 
 class CodePayload(BaseModel):
     code: str
-
+    redirect_uri: Optional[str] = None
 
 def has_manage_permission(guild: dict) -> bool:
     if guild.get("owner"):
@@ -23,28 +25,34 @@ def has_manage_permission(guild: dict) -> bool:
         perms = int(guild.get("permissions", "0"))
     except (ValueError, TypeError):
         return False
-    # MANAGE_GUILD (0x20) or ADMINISTRATOR (0x8)
     return bool(perms & 0x20) or bool(perms & 0x8)
-
 
 @router.post("/discord")
 async def discord_callback(payload: CodePayload, db: Session = Depends(get_db)):
     if not settings.DISCORD_CLIENT_ID or not settings.DISCORD_CLIENT_SECRET:
         raise HTTPException(status_code=500, detail="Discord OAuth not configured")
 
+    data = {
+        "client_id": settings.DISCORD_CLIENT_ID,
+        "client_secret": settings.DISCORD_CLIENT_SECRET,
+        "grant_type": "authorization_code",
+        "code": payload.code,
+    }
+    if payload.redirect_uri:
+        data["redirect_uri"] = payload.redirect_uri
+
     async with httpx.AsyncClient(timeout=15.0) as client:
         token_res = await client.post(
             "https://discord.com/api/oauth2/token",
-            data={
-                "client_id": settings.DISCORD_CLIENT_ID,
-                "client_secret": settings.DISCORD_CLIENT_SECRET,
-                "grant_type": "authorization_code",
-                "code": payload.code,
-            },
+            data=data,
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
+        
+        # Jika gagal, lempar error text asli dari Discord ke frontend
         if token_res.status_code != 200:
-            raise HTTPException(status_code=400, detail="Discord token exchange failed")
+            logger.error(f"Discord token error: {token_res.text}")
+            raise HTTPException(status_code=400, detail=f"Discord error: {token_res.text}")
+            
         token_data = token_res.json()
         access_token = token_data.get("access_token")
         if not access_token:
@@ -106,7 +114,6 @@ async def discord_callback(payload: CodePayload, db: Session = Depends(get_db)):
         },
         "servers": configured_servers,
     }
-
 
 @router.get("/me")
 async def get_me(user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
