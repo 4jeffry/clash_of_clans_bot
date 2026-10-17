@@ -284,3 +284,61 @@ def get_recap_war(server = Depends(get_active_server), db: Session = Depends(get
         "state": last_war.state,
         "data": result
     }
+
+@router.get("/recap-cwl")
+def get_recap_cwl(server = Depends(get_active_server), db: Session = Depends(get_db)):
+    # Ambil season CWL terakhir
+    season = db.query(CWLSeason).filter(CWLSeason.clan_tag == server.clan_tag).order_by(desc(CWLSeason.id)).first()
+    if not season:
+        return {"error": "Belum ada data season CWL di database."}
+
+    # Ambil semua war di season ini
+    wars = db.query(War).filter(War.cwl_season_id == season.id).all()
+    if not wars:
+        return {"error": "Tidak ada data perang di season CWL terakhir."}
+
+    war_ids = [w.id for w in wars]
+    
+    # Ambil semua partisipan di semua war tersebut
+    participants = db.query(WarParticipant).filter(WarParticipant.war_id.in_(war_ids)).all()
+
+    stats = {}
+    for p in participants:
+        if p.player_tag not in stats:
+            stats[p.player_tag] = {
+                "name": p.player_name,
+                "th": p.townhall_level,
+                "total_stars": 0,
+                "total_dest": 0.0,
+                "attacks_used": 0
+            }
+        
+        # Ambil attack dari player ini di war tertentu
+        attacks = db.query(WarAttack).filter(
+            WarAttack.war_id == p.war_id,
+            WarAttack.attacker_tag == p.player_tag
+        ).all()
+        
+        stars = sum(a.stars for a in attacks) if attacks else 0
+        dest = sum(a.destruction_percentage for a in attacks) if attacks else 0
+        
+        stats[p.player_tag]["total_stars"] += stars
+        stats[p.player_tag]["total_dest"] += dest
+        stats[p.player_tag]["attacks_used"] += len(attacks)
+
+    result = list(stats.values())
+    
+    # Hitung rata-rata destruction per attack
+    for r in result:
+        if r["attacks_used"] > 0:
+            r["avg_dest"] = round(r["total_dest"] / r["attacks_used"], 1)
+        else:
+            r["avg_dest"] = 0.0
+
+    # Sortir berdasarkan TH tertinggi, lalu bintang terbanyak
+    result.sort(key=lambda x: (-x['th'], -x['total_stars']))
+    
+    return {
+        "season": season.month,
+        "data": result
+    }
