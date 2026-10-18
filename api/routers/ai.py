@@ -119,7 +119,7 @@ async def enhance_audit(server = Depends(get_active_server), db: Session = Depen
             "zero_donors_count": len(zero_donors),
             "avg_donations": avg_donations
         }
-        save_ai_history(db, server.guild_id, "audit_enhance", raw_data, result_text)
+        save_ai_history(db, server.guild_id, "audit_enhance", raw_data, result_text.replace("<br>", "\n"))
     except Exception as e:
         print(f"Gagal simpan history: {e}") # Biar ga crash kalau tabel belum dibikin
 
@@ -144,3 +144,22 @@ def get_ai_history(server = Depends(get_active_server), db: Session = Depends(ge
             "snippet": r[3][:100] + "..." if len(r[3]) > 100 else r[3]
         } for r in rows
     ]
+
+
+@router.get("/history/{report_id}")
+def get_ai_history_detail(report_id: str, server = Depends(get_active_server), db: Session = Depends(get_db)):
+    row = db.execute(
+        text("SELECT id, feature_type, input_data, result_narrative, created_at FROM ai_reports WHERE id = :rid AND guild_id = :gid"),
+        {"rid": report_id, "gid": server.guild_id}
+    ).fetchone()
+    
+    if not row:
+        raise HTTPException(status_code=404, detail="Report tidak ditemukan")
+        
+    return {
+        "id": str(row[0]),
+        "type": row[1],
+        "raw_data": row[2],
+        "narrative": row[3],
+        "date": row[4]
+    }
