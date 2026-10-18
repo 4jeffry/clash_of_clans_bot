@@ -18,40 +18,44 @@ def get_war_room(server = Depends(get_active_server), db: Session = Depends(get_
         
     war_id = war.id
     
-    # 2. Ambil tag member kita (buat misahin kawan & lawan)
-    our_tags = {m.tag for m in db.query(ClanMember).filter(ClanMember.clan_tag == server.clan_tag).all()}
+    # 2. Tarik member kita (Normalisasi Tag: hapus '#' biar cocok)
+    our_tags = {m.tag.replace('#', '').strip() for m in db.query(ClanMember).filter(ClanMember.clan_tag == server.clan_tag).all()}
     
-    # 3. Query SAKTI: Gabungin war_participants dan war_attacks buat dapet bintang maksimal yang kita dapet di tiap base
-    query = text("""
-        SELECT 
-            wp.player_tag, wp.player_name, wp.townhall_level, wp.attacks_used, wp.attacks_allowed, wp.map_position,
-            COALESCE(MAX(wa.stars), 0) as max_stars
-        FROM war_participants wp
-        LEFT JOIN war_attacks wa ON wp.player_tag = wa.defender_tag AND wa.war_id = wp.war_id
-        WHERE wp.war_id = :wid
-        GROUP BY wp.player_tag, wp.player_name, wp.townhall_level, wp.attacks_used, wp.attacks_allowed, wp.map_position
-    """)
+    # 3. Tarik semua participant di war ini
+    participants = db.execute(text("SELECT player_tag, player_name, townhall_level, attacks_used, attacks_allowed, map_position, best_opp_stars FROM war_participants WHERE war_id = :wid"), {"wid": war_id}).fetchall()
     
-    participants = db.execute(query, {"wid": war_id}).fetchall()
+    # 4. Cek data attack (kalau war_attacks kosong, kita fallback ke best_opp_stars)
+    has_attack_data = db.execute(text("SELECT COUNT(*) FROM war_attacks WHERE war_id = :wid"), {"wid": war_id}).scalar() > 0
     
     our_attackers = []
     enemy_targets = []
     
     for p in participants:
-        if p.player_tag in our_tags:
+        p_tag_clean = p.player_tag.replace('#', '').strip()
+        
+        if p_tag_clean in our_tags:
             # Ini member kita
             if p.attacks_used < p.attacks_allowed:
                 our_attackers.append({"name": p.player_name, "th": p.townhall_level, "attacks_left": p.attacks_allowed - p.attacks_used})
         else:
-            # Ini musuh. Cek apakah max_stars di war_attacks belum 3
-            if int(p.max_stars) < 3:
-                enemy_targets.append({"name": p.player_name, "th": p.townhall_level, "map_position": p.map_position, "stars": int(p.max_stars)})
+            # Ini musuh
+            stars = 0
+            if has_attack_data:
+                # Kalau ada data di war_attacks, ambil bintang MAKSIMAL yang kita dapet di base musuh ini
+                stars_res = db.execute(text("SELECT COALESCE(MAX(stars), 0) FROM war_attacks WHERE war_id = :wid AND defender_tag = :dtag"), {"wid": war_id, "dtag": p.player_tag}).scalar()
+                stars = int(stars_res or 0)
+            else:
+                # Fallback kalau war_attacks kosong, pakai best_opp_stars (walaupun kadang gak akurat)
+                stars = int(p.best_opp_stars or 0)
+                
+            if stars < 3:
+                enemy_targets.append({"name": p.player_name, "th": p.townhall_level, "map_position": p.map_position, "stars": stars})
 
-    # 4. Urutkan dari TH tertinggi
+    # 5. Urutkan dari TH tertinggi
     our_attackers = sorted(our_attackers, key=lambda x: x['th'], reverse=True)
     enemy_targets = sorted(enemy_targets, key=lambda x: (x['th'], -x['map_position']), reverse=True)
     
-    # 5. Ambil 10 Matchmaking teratas
+    # 6. Matchmaking (Ambil maksimal 10)
     matchups = []
     for i in range(min(len(our_attackers), len(enemy_targets), 10)):
         matchups.append({"attacker": our_attackers[i], "target": enemy_targets[i]})
