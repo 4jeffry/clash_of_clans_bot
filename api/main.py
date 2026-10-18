@@ -30,6 +30,8 @@ def health():
 
 
 from api.routers import auth, clan, ai
+from api.routers.admin import dashboard as admin_dash
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(clan.router, prefix="/clan", tags=["clan"])
 app.include_router(ai.router, prefix="/ai", tags=["ai"])
+app.include_router(admin_dash.router, prefix="/admin", tags=["admin"])
