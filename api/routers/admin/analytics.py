@@ -13,14 +13,17 @@ class TrackPayload(BaseModel):
     guild_id: str = None
 
 # Endpoint PUBLIC buat nyatet view (dipanggil dari router Vue)
+import os
+
 @router.post("/track")
 def track_view(payload: TrackPayload, request: Request, db: Session = Depends(get_db)):
     try:
-        # Coba ambil user id dari token (kalau ada)
+        admin_id = os.getenv("ADMIN_DISCORD_ID", "1398959824976478298")
+        
+        # Ambil user id dari token (kalau ada)
         auth = request.headers.get("Authorization", "")
         user_id = None
         if auth.startswith("Bearer "):
-            from api.deps import get_current_user
             from api.config import settings
             import jwt
             try:
@@ -30,13 +33,21 @@ def track_view(payload: TrackPayload, request: Request, db: Session = Depends(ge
             except Exception:
                 pass
         
+        # SKIP kalau yang akses admin (biar statistik bersih)
+        if user_id == admin_id:
+            return {"success": True, "skipped": "admin"}
+        
+        # SKIP kalau path-nya /admin (double protection)
+        if payload.path.startswith("/admin"):
+            return {"success": True, "skipped": "admin_path"}
+        
         db.execute(
             text("INSERT INTO analytics_events (path, user_id, guild_id) VALUES (:path, :uid, :gid)"),
             {"path": payload.path, "uid": user_id, "gid": payload.guild_id}
         )
         db.commit()
     except Exception:
-        pass # Sengaja dibiarin silent, gak boleh ganggu UX user
+        pass
     return {"success": True}
 
 # Endpoint ADMIN buat baca stats
