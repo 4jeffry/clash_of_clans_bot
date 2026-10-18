@@ -1,26 +1,23 @@
 # API Reference
 
 Base URL: `https://clashofclansbot-production.up.railway.app`
-Auth: `Authorization: Bearer <JWT>` (dari Discord OAuth)
-Tenant: `X-Guild-Id: <guild_id>` (header wajib untuk endpoint clan/ai)
+Auth: `Authorization: Bearer <JWT>`
+Tenant: `X-Guild-Id: <guild_id>`
 
 ## Auth
-
 - `GET /auth/me` - Data user + daftar server
 
 ## Clan
-
 - `GET /clan/members` - Daftar member
 - `GET /clan/war` - Status war saat ini
-- `GET /clan/war/history` - 10 war terakhir
+- `GET /clan/war/history` - Riwayat war
 - `GET /clan/capital` - Info raid weekend
-- `GET /clan/dashboard` - Stats untuk Dashboard
+- `GET /clan/dashboard` - Stats Dashboard
 - `GET /clan/settings` - Config server
 - `PUT /clan/settings` - Update alert_channel_id
-- `POST /clan/settings/request-upgrade?tier=pro` - Ajukan upgrade
+- `POST /clan/settings/request-upgrade?tier=pro` - Ajukan upgrade (masuk ke upgrade_requests)
 
 ## AI
-
 - `GET /ai/audit` - Laporan rule-based
 - `POST /ai/audit/enhance` - Enhance pakai Gemini (potong 1 kredit)
 - `GET /ai/war-room` - Matchmaking war
@@ -33,11 +30,11 @@ Tenant: `X-Guild-Id: <guild_id>` (header wajib untuk endpoint clan/ai)
 - `GET /ai/history/{id}` - Detail history
 - `DELETE /ai/history/{id}` - Hapus history
 
-## Admin (khusus ADMIN_DISCORD_ID)
-
+## Admin
+- `GET /admin/analytics` - Statistik tracking
 - `GET /admin/stats` - Statistik global
 - `GET /admin/servers` - Semua server
 - `PUT /admin/servers/{guild_id}` - Update tier/credits/expired
 - `GET /admin/upgrade-requests` - Antrean upgrade
 - `DELETE /admin/upgrade-requests/{id}` - Hapus request
-- `POST /admin/broadcast` - Kirim promo ke semua channel
+- `POST /admin/broadcast` - Kirim promo
