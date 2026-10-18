@@ -7,6 +7,17 @@ from collections import Counter
 
 router = APIRouter()
 
+def get_ai_credits(db: Session, guild_id: str) -> int:
+    # Ambil langsung dari DB sesuai tabel lu
+    res = db.execute(text("SELECT ai_credits FROM server_configs WHERE guild_id = :gid"), {"gid": guild_id}).scalar()
+    return res if res is not None else 0
+
+def deduct_ai_credit(db: Session, guild_id: str):
+    # Potong 1 kredit langsung di DB
+    db.execute(text("UPDATE server_configs SET ai_credits = ai_credits - 1 WHERE guild_id = :gid"), {"gid": guild_id})
+    db.commit()
+
+
 @router.get("/audit")
 def get_audit_rule_based(server = Depends(get_active_server), db: Session = Depends(get_db)):
     # 1. Ambil data statistik
@@ -39,13 +50,13 @@ def get_audit_rule_based(server = Depends(get_active_server), db: Session = Depe
             "th_summary": th_summary
         },
         "narrative": narrative,
-        "credits": getattr(server, "ai_credits", 10)
+        "credits": get_ai_credits(db, server.guild_id), "ai_credits", 10)
     }
 
 @router.post("/audit/enhance")
 async def enhance_audit(server = Depends(get_active_server), db: Session = Depends(get_db)):
     # 1. Cek Kredit
-    credits = getattr(server, 'ai_credits', 10)
+    credits = get_ai_credits(db, server.guild_id)
     if credits <= 0:
         raise HTTPException(status_code=402, detail="Kredit AI Anda habis. Silakan top up.")
 
@@ -93,5 +104,5 @@ async def enhance_audit(server = Depends(get_active_server), db: Session = Depen
 
     return {
         "narrative": result_text,
-        "credits": getattr(server, "ai_credits", 10)
+        "credits": get_ai_credits(db, server.guild_id), "ai_credits", 10)
     }
