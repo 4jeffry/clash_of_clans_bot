@@ -1,60 +1,77 @@
+import urllib.parse
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from api.deps import get_active_server, get_db
-from models import ClanMember
 from api.services.web_ai import generate_narrative, get_base_prompt
+from api.routers.clan import fetch_coc
 from .utils import get_ai_credits, deduct_ai_credit, save_ai_history
 
 router = APIRouter()
 
 @router.get("/war-room")
-def get_war_room(server = Depends(get_active_server), db: Session = Depends(get_db)):
-    # 1. Cari War terbaru
-    war = db.execute(text("SELECT id, opponent_name, clan_stars, opp_stars, clan_destruction, opp_destruction, team_size, state FROM wars WHERE clan_tag = :ctag ORDER BY id DESC LIMIT 1"), {"ctag": server.clan_tag}).fetchone()
+async def get_war_room(server = Depends(get_active_server), db: Session = Depends(get_db)):
+    # 1. Tarik data Live War dari Supercell API
+    encoded_tag = urllib.parse.quote(server.clan_tag)
+    live_war = await fetch_coc(f"/clans/{encoded_tag}/currentwar")
     
-    if not war or war.state not in ['inWar', 'preparation']:
-        return {"error": "Klan sedang tidak dalam state War."}
-        
-    war_id = war.id
-    team_size = war.team_size or 15
+    if not live_war or live_war.get("state") in ["notInWar", "preparation"]:
+        return {"error": "Klan sedang tidak dalam state War (atau masih preparation)."}
+
+    clan = live_war.get("clan", {})
+    opponent = live_war.get("opponent", {})
     
-    # 2. Tarik data member kita yang masih punya sisa attack
-    our_participants = db.execute(text("SELECT player_name, townhall_level, attacks_used, attacks_allowed FROM war_participants WHERE war_id = :wid AND attacks_used < attacks_allowed"), {"wid": war_id}).fetchall()
+    clan_members = clan.get("members", [])
+    opp_members = opponent.get("members", [])
+    attacks_per_member = live_war.get("attacksPerMember", 2)
+
+    # 2. Ambil Attacker Kita (Sisa Attack)
+    our_attackers = []
+    for m in clan_members:
+        attacks_used = len(m.get("attacks", []))
+        if attacks_used < attacks_per_member:
+            our_attackers.append({
+                "name": m.get("name"),
+                "th": m.get("townhallLevel"),
+                "attacks_left": attacks_per_member - attacks_used,
+                "map_position": m.get("mapPosition")
+            })
     
-    our_attackers = [{"name": p.player_name, "th": p.townhall_level, "attacks_left": p.attacks_allowed - p.attacks_used} for p in our_participants]
+    # Urutkan Attacker dari TH tertinggi
     our_attackers = sorted(our_attackers, key=lambda x: x['th'], reverse=True)
-    
-    total_attacks_left = sum(a['attacks_left'] for a in our_attackers)
 
-    # 3. Cari Base Musuh yang belum 3 star dari tabel war_attacks
-    # (Karena kita gak punya data nama musuh, kita pake nomor base / map position)
-    attacks_data = db.execute(text("SELECT defender_map_position, MAX(stars) as max_stars FROM war_attacks WHERE war_id = :wid GROUP BY defender_map_position"), {"wid": war_id}).fetchall()
-    
-    attacked_positions = {row.defender_map_position: row.max_stars for row in attacks_data}
-    
-    # Base 1 sampai 15, cari yang belum 3 star
+    # 3. Ambil Target Musuh (Belum 3 Star)
     enemy_targets = []
-    for pos in range(1, team_size + 1):
-        stars = attacked_positions.get(pos, 0)
-        if stars < 3:
-            enemy_targets.append({"map_position": pos, "stars": stars})
+    for m in opp_members:
+        best_opp_stars = m.get("bestOpponentAttack", {}).get("stars", 0) if m.get("bestOpponentAttack") else 0
+        if best_opp_stars < 3:
+            enemy_targets.append({
+                "name": m.get("name"),
+                "th": m.get("townhallLevel"),
+                "map_position": m.get("mapPosition"),
+                "stars": best_opp_stars
+            })
             
-    # Urutkan target dari base nomor terkecil (asumsi base 1-5 paling kuat, kita urutkan dari atas ke bawah)
-    # Kalau mau dari bawah (paling lemah), tinggal di-reverse
-    enemy_targets = sorted(enemy_targets, key=lambda x: x['map_position'])
+    # Urutkan Target dari TH tertinggi
+    enemy_targets = sorted(enemy_targets, key=lambda x: x['th'], reverse=True)
 
-    # 4. Matchmaking (Top 10)
+    # 4. Matchmaking Logic (Greedy Match: Terkuat vs Terkuat)
     matchups = []
     for i in range(min(len(our_attackers), len(enemy_targets), 10)):
         matchups.append({"attacker": our_attackers[i], "target": enemy_targets[i]})
 
+    total_attacks_left = sum(a['attacks_left'] for a in our_attackers)
+
     return {
-        "state": war.state, "opponent_name": war.opponent_name,
-        "clan_stars": war.clan_stars, "opp_stars": war.opp_stars,
-        "clan_destruction": float(war.clan_destruction or 0), "opp_destruction": float(war.opp_destruction or 0),
+        "state": live_war.get("state"),
+        "opponent_name": opponent.get("name"),
+        "clan_stars": clan.get("stars", 0),
+        "opp_stars": opponent.get("stars", 0),
+        "clan_destruction": clan.get("destructionPercentage", 0),
+        "opp_destruction": opponent.get("destructionPercentage", 0),
         "total_attacks_left": total_attacks_left,
-        "matchups": matchups, "credits": get_ai_credits(db, server.guild_id)
+        "matchups": matchups,
+        "credits": get_ai_credits(db, server.guild_id)
     }
 
 @router.post("/war-room/enhance")
@@ -62,12 +79,12 @@ async def enhance_war_room(server = Depends(get_active_server), db: Session = De
     credits = get_ai_credits(db, server.guild_id)
     if credits <= 0: raise HTTPException(status_code=402, detail="Kredit AI Anda habis.")
 
-    war_data = get_war_room(server, db)
+    war_data = await get_war_room(server, db)
     if "error" in war_data: raise HTTPException(status_code=400, detail=war_data["error"])
 
-    matchup_text = "\n".join([f"- {m['attacker']['name']} (TH{m['attacker']['th']}) disarankan nyerang Base #{m['target']['map_position']} (Baru {m['target']['stars']} Star)" for m in war_data['matchups']])
+    matchup_text = "\n".join([f"- {m['attacker']['name']} (TH{m['attacker']['th']}) disarankan nyerang Base #{m['target']['map_position']} {m['target']['name']} (TH{m['target']['th']}, baru {m['target']['stars']} Star)" for m in war_data['matchups']])
 
-    prompt = f"{get_base_prompt()}\nDATA WAR SAAT INI:\nKlan Kita: {war_data['clan_stars']} Bintang\nMusuh ({war_data['opponent_name']}): {war_data['opp_stars']} Bintang\nTotal Sisa Attack Kita: {war_data['total_attacks_left']}\n\nREKOMENDASI MATCHMAKING (Berdasarkan Base Musuh yang belum 3 Star):\n{matchup_text}\n\nTuliskan ANALISIS STRATEGI WAR singkat (maksimal 3 poin) untuk Clan Leader. Fokus pada instruksi siapa harus nyerang Base nomor berapa."
+    prompt = f"{get_base_prompt()}\nDATA WAR SAAT INI:\nKlan Kita: {war_data['clan_stars']} Bintang\nMusuh ({war_data['opponent_name']}): {war_data['opp_stars']} Bintang\nTotal Sisa Attack Kita: {war_data['total_attacks_left']}\n\nREKOMENDASI MATCHMAKING:\n{matchup_text}\n\nTuliskan ANALISIS STRATEGI WAR singkat (maksimal 3 poin) untuk Clan Leader. Fokus pada instruksi siapa harus nyerang siapa berdasarkan sisa attack dan data di atas."
     
     result_text = await generate_narrative(prompt)
     deduct_ai_credit(db, server.guild_id)
