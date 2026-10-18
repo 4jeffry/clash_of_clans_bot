@@ -20,7 +20,6 @@ def deduct_ai_credit(db: Session, guild_id: str):
 
 # --- HELPER HISTORY ---
 def save_ai_history(db: Session, guild_id: str, feature_type: str, input_data: dict, narrative: str):
-    # Pastikan nama tabel sesuai. Kalau pakai schema threads, ubah jadi threads.ai_reports
     db.execute(
         text("INSERT INTO ai_reports (guild_id, feature_type, input_data, result_narrative) VALUES (:gid, :ftype, :data, :narrative)"),
         {
@@ -112,8 +111,9 @@ async def enhance_audit(server = Depends(get_active_server), db: Session = Depen
     result_text = await generate_narrative(prompt)
     deduct_ai_credit(db, server.guild_id)
 
-    # Simpan ke History
+    # Simpan ke History (Raw SQL)
     try:
+        # Ambil raw data lagi buat disimpen
         raw_data = {
             "total_members": total_members,
             "zero_donors_count": len(zero_donors),
@@ -121,7 +121,7 @@ async def enhance_audit(server = Depends(get_active_server), db: Session = Depen
         }
         save_ai_history(db, server.guild_id, "audit_enhance", raw_data, result_text)
     except Exception as e:
-        print(f"Gagal simpan history: {e}")
+        print(f"Gagal simpan history: {e}") # Biar ga crash kalau tabel belum dibikin
 
     return {
         "narrative": result_text,
@@ -131,7 +131,6 @@ async def enhance_audit(server = Depends(get_active_server), db: Session = Depen
 # --- ENDPOINT 3: GET HISTORY ---
 @router.get("/history")
 def get_ai_history(server = Depends(get_active_server), db: Session = Depends(get_db)):
-    # Ambil data pakai guild_id
     rows = db.execute(
         text("SELECT id, feature_type, created_at, result_narrative FROM ai_reports WHERE guild_id = :gid ORDER BY created_at DESC LIMIT 20"),
         {"gid": server.guild_id}
