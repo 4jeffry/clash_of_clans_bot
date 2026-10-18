@@ -27,7 +27,7 @@ def get_war_room(server = Depends(get_active_server), db: Session = Depends(get_
             if p.attacks_used < p.attacks_allowed:
                 our_attackers.append({"name": p.player_name, "th": p.townhall_level, "attacks_left": p.attacks_allowed - p.attacks_used})
         else:
-            if p.best_opp_stars < 3:
+            if int(p.best_opp_stars or 0) < 3:
                 enemy_targets.append({"name": p.player_name, "th": p.townhall_level, "map_position": p.map_position, "stars": p.best_opp_stars})
 
     our_attackers = sorted(our_attackers, key=lambda x: x['th'], reverse=True)
