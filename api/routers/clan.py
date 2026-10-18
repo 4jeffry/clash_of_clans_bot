@@ -572,3 +572,18 @@ def update_server_settings(payload: SettingsPayload, server = Depends(get_active
     )
     db.commit()
     return {"success": True, "message": "Pengaturan berhasil disimpan."}
+
+
+@router.post("/settings/request-upgrade")
+def request_upgrade(tier: str = "pro", server = Depends(get_active_server), db: Session = Depends(get_db)):
+    if tier not in ['standard', 'pro']:
+        raise HTTPException(status_code=400, detail="Tier tidak valid.")
+    exists = db.execute(text("SELECT id FROM upgrade_requests WHERE guild_id = :gid AND status = 'pending'"), {"gid": server.guild_id}).fetchone()
+    if exists:
+        return {"success": True, "message": "Request lu udah masuk antrean admin."}
+    db.execute(
+        text("INSERT INTO upgrade_requests (guild_id, clan_tag, requested_tier) VALUES (:gid, :ctag, :tier)"),
+        {"gid": server.guild_id, "ctag": server.clan_tag, "tier": tier}
+    )
+    db.commit()
+    return {"success": True, "message": f"Request upgrade ke {tier.capitalize()} berhasil dikirim!"}
