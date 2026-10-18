@@ -39,13 +39,14 @@ def get_audit_rule_based(server = Depends(get_active_server), db: Session = Depe
             "th_summary": th_summary
         },
         "narrative": narrative,
-        "credits": server.ai_credits
+        "credits": getattr(server, "ai_credits", 10)
     }
 
 @router.post("/audit/enhance")
 async def enhance_audit(server = Depends(get_active_server), db: Session = Depends(get_db)):
     # 1. Cek Kredit
-    if not server.ai_credits or server.ai_credits <= 0:
+    credits = getattr(server, 'ai_credits', 10)
+    if credits <= 0:
         raise HTTPException(status_code=402, detail="Kredit AI Anda habis. Silakan top up.")
 
     # 2. Ambil data (mirip rule-based)
@@ -83,11 +84,14 @@ async def enhance_audit(server = Depends(get_active_server), db: Session = Depen
     # 4. Panggil AI & Kurangi Kredit
     result_text = await generate_narrative(prompt)
     
-    # Kurangi kredit
-    server.ai_credits -= 1
+    # Kurangi kredit via Raw SQL (biar models.py bot ga disentuh)
+    from sqlalchemy import text
+    # Asumsi nama tabel adalah server_configs
+    db.execute(text("UPDATE server_configs SET ai_credits = COALESCE(ai_credits, 10) - 1 WHERE id = :id"), {"id": server.id})
     db.commit()
+    new_credits = db.execute(text("SELECT ai_credits FROM server_configs WHERE id = :id"), {"id": server.id}).scalar()
 
     return {
         "narrative": result_text,
-        "credits": server.ai_credits
+        "credits": getattr(server, "ai_credits", 10)
     }
