@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, func, text
 from api.deps import get_active_server, get_db
-from models import War, ClanMember, WarHistory, CapitalRaid, CapitalParticipant, WarParticipant, WarAttack, WarParticipant
+from models import War, ClanMember, WarHistory, CapitalRaid, CapitalParticipant, WarParticipant, WarAttack, ServerConfig
 import os
 import urllib.parse
 import httpx
