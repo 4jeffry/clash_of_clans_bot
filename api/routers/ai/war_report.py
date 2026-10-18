@@ -3,12 +3,13 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 from api.deps import get_active_server, get_db
 from api.services.web_ai import generate_narrative, get_base_prompt
-from .utils import get_ai_credits, deduct_ai_credit, save_ai_history
+from .utils import get_ai_credits, deduct_ai_credit, save_ai_history, disable_prepare
 
 router = APIRouter()
 
 @router.get("/war-report")
 def get_war_report(server = Depends(get_active_server), db: Session = Depends(get_db)):
+    disable_prepare(db)
     # 1. Cari war terakhir yang udah selesai
     war = db.execute(text("SELECT id, opponent_name, clan_stars, opp_stars, clan_destruction, opp_destruction, result FROM wars WHERE clan_tag = :ctag AND state = 'warEnded' ORDER BY id DESC LIMIT 1"), {"ctag": server.clan_tag}).fetchone()
     
@@ -54,6 +55,7 @@ def get_war_report(server = Depends(get_active_server), db: Session = Depends(ge
 
 @router.post("/war-report/enhance")
 async def enhance_war_report(server = Depends(get_active_server), db: Session = Depends(get_db)):
+    disable_prepare(db)
     credits = get_ai_credits(db, server.guild_id)
     if credits <= 0: raise HTTPException(status_code=402, detail="Kredit AI habis.")
 
