@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, func
 from api.deps import get_active_server, get_db
@@ -416,6 +416,10 @@ from pydantic import BaseModel
 from models import RaceReward
 import datetime
 
+
+class RewardUpdatePayload(BaseModel):
+    reward_note: str
+
 class RewardPayload(BaseModel):
     player_tag: str
     reward_note: str
@@ -465,3 +469,22 @@ def give_reward(payload: RewardPayload, server = Depends(get_active_server), db:
     db.add(new_reward)
     db.commit()
     return {"success": True, "message": "Reward berhasil dicatat."}
+
+
+@router.delete("/rewards/{reward_id}")
+def delete_reward(reward_id: int, db: Session = Depends(get_db)):
+    reward = db.query(RaceReward).filter(RaceReward.id == reward_id).first()
+    if not reward:
+        raise HTTPException(status_code=404, detail="Reward tidak ditemukan")
+    db.delete(reward)
+    db.commit()
+    return {"success": True, "message": "Reward berhasil dihapus"}
+
+@router.put("/rewards/{reward_id}")
+def update_reward(reward_id: int, payload: RewardUpdatePayload, db: Session = Depends(get_db)):
+    reward = db.query(RaceReward).filter(RaceReward.id == reward_id).first()
+    if not reward:
+        raise HTTPException(status_code=404, detail="Reward tidak ditemukan")
+    reward.reward_note = payload.reward_note
+    db.commit()
+    return {"success": True, "message": "Reward berhasil diupdate"}
