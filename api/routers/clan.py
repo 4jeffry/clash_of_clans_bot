@@ -541,16 +541,22 @@ class SettingsPayload(BaseModel):
 
 @router.get("/settings")
 def get_server_settings(server = Depends(get_active_server), db: Session = Depends(get_db)):
-    config = db.query(ServerConfig).filter(ServerConfig.guild_id == server.guild_id).first()
-    if not config:
+    # Pake Raw SQL biar dapet ai_credits & clan_badge_url yang gak ada di models.py
+    row = db.execute(
+        text("SELECT clan_tag, tier, expired_at, alert_channel_id, ai_credits, clan_badge_url FROM server_configs WHERE guild_id = :gid"),
+        {"gid": server.guild_id}
+    ).fetchone()
+    
+    if not row:
         raise HTTPException(status_code=404, detail="Konfigurasi server tidak ditemukan.")
         
     return {
-        "clan_tag": config.clan_tag,
-        "tier": getattr(config, 'tier', 'free'),
-        "expired_at": getattr(config, 'expired_at', None),
-        "alert_channel_id": getattr(config, 'alert_channel_id', ''),
-        "ai_credits": getattr(config, 'ai_credits', 0)
+        "clan_tag": row.clan_tag,
+        "tier": row.tier or 'free',
+        "expired_at": row.expired_at,
+        "alert_channel_id": row.alert_channel_id or '',
+        "ai_credits": row.ai_credits or 0,
+        "clan_badge_url": row.clan_badge_url or ''
     }
 
 @router.put("/settings")
