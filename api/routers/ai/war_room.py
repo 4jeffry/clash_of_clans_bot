@@ -1,4 +1,5 @@
 import urllib.parse
+from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -9,69 +10,69 @@ from .utils import get_ai_credits, deduct_ai_credit, save_ai_history
 
 router = APIRouter()
 
+async def sync_opponents_if_needed(db: Session, clan_tag: str, war_id: int):
+    # Cek kapan terakhir sync untuk war ini
+    last_sync = db.execute(text("SELECT MAX(created_at) FROM war_opponents WHERE war_id = :wid"), {"wid": war_id}).scalar()
+    
+    now = datetime.utcnow()
+    # TTL 15 Menit
+    if not last_sync or (now - last_sync.replace(tzinfo=None)) > timedelta(minutes=15):
+        encoded_tag = urllib.parse.quote(clan_tag)
+        live_war = await fetch_coc(f"/clans/{encoded_tag}/currentwar")
+        
+        if live_war and live_war.get("state") in ["inWar", "preparation"]:
+            opp_members = live_war.get("opponent", {}).get("members", [])
+            
+            # 1. Bersihin data war lama (biar DB gak bengkak)
+            db.execute(text("DELETE FROM war_opponents WHERE war_id != :wid"), {"wid": war_id})
+            
+            # 2. UPSERT data musuh (Update kalau ada, Insert kalau baru)
+            for m in opp_members:
+                best_stars = m.get("bestOpponentAttack", {}).get("stars", 0) if m.get("bestOpponentAttack") else 0
+                
+                # Cek dulu udah ada belum
+                exists = db.execute(text("SELECT id FROM war_opponents WHERE war_id = :wid AND player_tag = :tag"), {"wid": war_id, "tag": m.get("tag")}).scalar()
+                
+                if exists:
+                    # Update bintangnya aja
+                    db.execute(text("UPDATE war_opponents SET best_stars = :stars WHERE id = :id"), {"stars": best_stars, "id": exists})
+                else:
+                    # Insert baru
+                    db.execute(text("INSERT INTO war_opponents (war_id, player_tag, player_name, townhall_level, map_position, best_stars) VALUES (:wid, :tag, :name, :th, :pos, :stars)"), {"wid": war_id, "tag": m.get("tag"), "name": m.get("name"), "th": m.get("townhallLevel"), "pos": m.get("mapPosition"), "stars": best_stars})
+            db.commit()
+
 @router.get("/war-room")
 async def get_war_room(server = Depends(get_active_server), db: Session = Depends(get_db)):
-    # 1. Tarik data Live War dari Supercell API
-    encoded_tag = urllib.parse.quote(server.clan_tag)
-    live_war = await fetch_coc(f"/clans/{encoded_tag}/currentwar")
+    war = db.execute(text("SELECT id, state FROM wars WHERE clan_tag = :ctag ORDER BY id DESC LIMIT 1"), {"ctag": server.clan_tag}).fetchone()
     
-    if not live_war or live_war.get("state") in ["notInWar", "preparation"]:
-        return {"error": "Klan sedang tidak dalam state War (atau masih preparation)."}
+    if not war or war.state not in ['inWar', 'preparation']:
+        return {"error": "Klan sedang tidak dalam state War."}
+        
+    war_id = war.id
 
-    clan = live_war.get("clan", {})
-    opponent = live_war.get("opponent", {})
-    
-    clan_members = clan.get("members", [])
-    opp_members = opponent.get("members", [])
-    attacks_per_member = live_war.get("attacksPerMember", 2)
+    # Sync cuma kalau udah 15 menit
+    await sync_opponents_if_needed(db, server.clan_tag, war_id)
 
-    # 2. Ambil Attacker Kita (Sisa Attack)
-    our_attackers = []
-    for m in clan_members:
-        attacks_used = len(m.get("attacks", []))
-        if attacks_used < attacks_per_member:
-            our_attackers.append({
-                "name": m.get("name"),
-                "th": m.get("townhallLevel"),
-                "attacks_left": attacks_per_member - attacks_used,
-                "map_position": m.get("mapPosition")
-            })
+    war_info = db.execute(text("SELECT opponent_name, clan_stars, opp_stars, clan_destruction, opp_destruction FROM wars WHERE id = :wid"), {"wid": war_id}).fetchone()
     
-    # Urutkan Attacker dari TH tertinggi
+    our_participants = db.execute(text("SELECT player_name, townhall_level, attacks_used, attacks_allowed FROM war_participants WHERE war_id = :wid AND attacks_used < attacks_allowed"), {"wid": war_id}).fetchall()
+    our_attackers = [{"name": p.player_name, "th": p.townhall_level, "attacks_left": p.attacks_allowed - p.attacks_used} for p in our_participants]
     our_attackers = sorted(our_attackers, key=lambda x: x['th'], reverse=True)
 
-    # 3. Ambil Target Musuh (Belum 3 Star)
-    enemy_targets = []
-    for m in opp_members:
-        best_opp_stars = m.get("bestOpponentAttack", {}).get("stars", 0) if m.get("bestOpponentAttack") else 0
-        if best_opp_stars < 3:
-            enemy_targets.append({
-                "name": m.get("name"),
-                "th": m.get("townhallLevel"),
-                "map_position": m.get("mapPosition"),
-                "stars": best_opp_stars
-            })
-            
-    # Urutkan Target dari TH tertinggi
+    opp_targets = db.execute(text("SELECT player_name, townhall_level, map_position, best_stars FROM war_opponents WHERE war_id = :wid AND best_stars < 3"), {"wid": war_id}).fetchall()
+    enemy_targets = [{"name": t.player_name, "th": t.townhall_level, "map_position": t.map_position, "stars": t.best_stars} for t in opp_targets]
     enemy_targets = sorted(enemy_targets, key=lambda x: x['th'], reverse=True)
 
-    # 4. Matchmaking Logic (Greedy Match: Terkuat vs Terkuat)
     matchups = []
     for i in range(min(len(our_attackers), len(enemy_targets), 10)):
         matchups.append({"attacker": our_attackers[i], "target": enemy_targets[i]})
 
-    total_attacks_left = sum(a['attacks_left'] for a in our_attackers)
-
     return {
-        "state": live_war.get("state"),
-        "opponent_name": opponent.get("name"),
-        "clan_stars": clan.get("stars", 0),
-        "opp_stars": opponent.get("stars", 0),
-        "clan_destruction": clan.get("destructionPercentage", 0),
-        "opp_destruction": opponent.get("destructionPercentage", 0),
-        "total_attacks_left": total_attacks_left,
-        "matchups": matchups,
-        "credits": get_ai_credits(db, server.guild_id)
+        "state": war.state, "opponent_name": war_info.opponent_name,
+        "clan_stars": war_info.clan_stars, "opp_stars": war_info.opp_stars,
+        "clan_destruction": float(war_info.clan_destruction or 0), "opp_destruction": float(war_info.opp_destruction or 0),
+        "total_attacks_left": sum(a['attacks_left'] for a in our_attackers),
+        "matchups": matchups, "credits": get_ai_credits(db, server.guild_id)
     }
 
 @router.post("/war-room/enhance")
@@ -84,7 +85,7 @@ async def enhance_war_room(server = Depends(get_active_server), db: Session = De
 
     matchup_text = "\n".join([f"- {m['attacker']['name']} (TH{m['attacker']['th']}) disarankan nyerang Base #{m['target']['map_position']} {m['target']['name']} (TH{m['target']['th']}, baru {m['target']['stars']} Star)" for m in war_data['matchups']])
 
-    prompt = f"{get_base_prompt()}\nDATA WAR SAAT INI:\nKlan Kita: {war_data['clan_stars']} Bintang\nMusuh ({war_data['opponent_name']}): {war_data['opp_stars']} Bintang\nTotal Sisa Attack Kita: {war_data['total_attacks_left']}\n\nREKOMENDASI MATCHMAKING:\n{matchup_text}\n\nTuliskan ANALISIS STRATEGI WAR singkat (maksimal 3 poin) untuk Clan Leader. Fokus pada instruksi siapa harus nyerang siapa berdasarkan sisa attack dan data di atas."
+    prompt = f"{get_base_prompt()}\nDATA WAR SAAT INI:\nKlan Kita: {war_data['clan_stars']} Bintang\nMusuh ({war_data['opponent_name']}): {war_data['opp_stars']} Bintang\nTotal Sisa Attack Kita: {war_data['total_attacks_left']}\n\nREKOMENDASI MATCHMAKING:\n{matchup_text}\n\nTuliskan ANALISIS STRATEGI WAR singkat (maksimal 3 poin) untuk Clan Leader."
     
     result_text = await generate_narrative(prompt)
     deduct_ai_credit(db, server.guild_id)
