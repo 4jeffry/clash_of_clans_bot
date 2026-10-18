@@ -4,9 +4,11 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 
 def check_pro_tier(server):
-    # Ngecek tier dari server config. Kalau bukan 'pro', langsung tolak
-    if getattr(server, 'tier', 'free') != 'pro':
-        raise HTTPException(status_code=403, detail="Fitur ini khusus pengguna PRO. Silakan upgrade.")
+    # Ngecek tier. Kalau bukan 'pro', lempar error 403.
+    # Sesuaikan nama kolom 'tier' kalau di model lu beda.
+    current_tier = getattr(server, 'tier', 'free')
+    if current_tier != 'pro':
+        raise HTTPException(status_code=403, detail="Fitur ini khusus pengguna PRO.")
 
 def disable_prepare(db: Session):
     try:
