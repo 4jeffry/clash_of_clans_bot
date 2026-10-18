@@ -488,3 +488,49 @@ def update_reward(reward_id: int, payload: RewardUpdatePayload, db: Session = De
     reward.reward_note = payload.reward_note
     db.commit()
     return {"success": True, "message": "Reward berhasil diupdate"}
+
+
+@router.get("/dashboard")
+def get_dashboard_data(server = Depends(get_active_server), db: Session = Depends(get_db)):
+    # 1. Tren Donasi (7 hari terakhir)
+    donation_trend = db.execute(
+        text("""
+            SELECT snap_date, SUM(donations) as total_donations 
+            FROM member_snapshots 
+            WHERE clan_tag = :ctag 
+            GROUP BY snap_date 
+            ORDER BY snap_date ASC 
+            LIMIT 7
+        """), {"ctag": server.clan_tag}
+    ).fetchall()
+    
+    # 2. Win Rate War
+    war_results = db.execute(
+        text("SELECT result, COUNT(*) as count FROM war_history WHERE clan_tag = :ctag GROUP BY result"), 
+        {"ctag": server.clan_tag}
+    ).fetchall()
+    
+    # 3. Top 5 Donatur
+    top_donors = db.execute(
+        text("SELECT name, donations FROM members WHERE clan_tag = :ctag ORDER BY donations DESC LIMIT 5"), 
+        {"ctag": server.clan_tag}
+    ).fetchall()
+
+    # Format Data
+    trend_labels = [row.snap_date.strftime('%d %b') if row.snap_date else '-' for row in donation_trend]
+    trend_data = [int(row.total_donations or 0) for row in donation_trend]
+    
+    win = 0
+    lose = 0
+    for r in war_results:
+        if r.result == 'win': win = r.count
+        elif r.result == 'lose': lose = r.count
+
+    return {
+        "donation_trend": {"labels": trend_labels, "data": trend_data},
+        "war_stats": {"win": win, "lose": lose},
+        "top_donors": {
+            "labels": [row.name for row in top_donors],
+            "data": [int(row.donations or 0) for row in top_donors]
+        }
+    }
