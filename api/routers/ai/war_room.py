@@ -97,7 +97,7 @@ async def enhance_war_room(server = Depends(get_active_server), db: Session = De
     disable_prepare(db)
     credits = get_ai_credits(db, server.guild_id)
     if credits <= 0: raise HTTPException(status_code=402, detail="Kredit AI Anda habis.")
-    war_data = await get_war_room(server, db)
+    war_data = await get_war_room(server, db, filter_th=None)
     if "error" in war_data: raise HTTPException(status_code=400, detail=war_data["error"])
 
     matchup_text = "\n".join([f"- {m['attacker']['name']} (TH{m['attacker']['th']}) disarankan nyerang Base #{m['target']['map_position']} {m['target']['name']} (TH{m['target']['th']}, baru {m['target']['stars']} Star)" for m in war_data['matchups']])
