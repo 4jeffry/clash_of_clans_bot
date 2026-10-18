@@ -534,3 +534,35 @@ def get_dashboard_data(server = Depends(get_active_server), db: Session = Depend
             "data": [int(row.donations or 0) for row in top_donors]
         }
     }
+
+
+class SettingsPayload(BaseModel):
+    alert_channel_id: str
+
+@router.get("/settings")
+def get_server_settings(server = Depends(get_active_server), db: Session = Depends(get_db)):
+    config = db.query(ServerConfig).filter(ServerConfig.guild_id == server.guild_id).first()
+    if not config:
+        raise HTTPException(status_code=404, detail="Konfigurasi server tidak ditemukan.")
+        
+    return {
+        "clan_tag": config.clan_tag,
+        "tier": getattr(config, 'tier', 'free'),
+        "expired_at": getattr(config, 'expired_at', None),
+        "alert_channel_id": getattr(config, 'alert_channel_id', ''),
+        "ai_credits": getattr(config, 'ai_credits', 0)
+    }
+
+@router.put("/settings")
+def update_server_settings(payload: SettingsPayload, server = Depends(get_active_server), db: Session = Depends(get_db)):
+    config = db.query(ServerConfig).filter(ServerConfig.guild_id == server.guild_id).first()
+    if not config:
+        raise HTTPException(status_code=404, detail="Konfigurasi server tidak ditemukan.")
+        
+    # Pake Raw SQL biar gak error walau models.py ga diupdate
+    db.execute(
+        text("UPDATE server_configs SET alert_channel_id = :chan WHERE guild_id = :gid"),
+        {"chan": payload.alert_channel_id, "gid": server.guild_id}
+    )
+    db.commit()
+    return {"success": True, "message": "Pengaturan berhasil disimpan."}
