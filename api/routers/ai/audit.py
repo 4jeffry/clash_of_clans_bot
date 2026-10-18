@@ -4,12 +4,13 @@ from api.deps import get_active_server, get_db
 from models import ClanMember
 from api.services.web_ai import generate_narrative, get_base_prompt
 from collections import Counter
-from .utils import get_ai_credits, deduct_ai_credit, save_ai_history
+from .utils import check_pro_tier,  get_ai_credits, deduct_ai_credit, save_ai_history
 
 router = APIRouter()
 
 @router.get("/audit")
 def get_audit_rule_based(server = Depends(get_active_server), db: Session = Depends(get_db)):
+    check_pro_tier(server)
     members = db.query(ClanMember).filter(ClanMember.clan_tag == server.clan_tag).all()
     if not members:
         return {"error": "Belum ada data member."}

@@ -15,3 +15,18 @@ def get_ai_history_detail(report_id: str, server = Depends(get_active_server), d
     row = db.execute(text("SELECT id, feature_type, input_data, result_narrative, created_at FROM ai_reports WHERE id = :rid AND guild_id = :gid"), {"rid": report_id, "gid": server.guild_id}).fetchone()
     if not row: raise HTTPException(status_code=404, detail="Report tidak ditemukan")
     return {"id": str(row[0]), "type": row[1], "raw_data": row[2], "narrative": row[3], "date": row[4]}
+
+@router.delete("/history/{report_id}")
+def delete_ai_history(report_id: str, server = Depends(get_active_server), db: Session = Depends(get_db)):
+    try:
+        res = db.execute(
+            text("DELETE FROM ai_reports WHERE id = :rid AND guild_id = :gid"),
+            {"rid": report_id, "gid": server.guild_id}
+        )
+        db.commit()
+        if res.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Report tidak ditemukan")
+        return {"success": True, "message": "Report berhasil dihapus"}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))

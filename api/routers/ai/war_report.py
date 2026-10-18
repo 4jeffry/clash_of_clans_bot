@@ -3,12 +3,13 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 from api.deps import get_active_server, get_db
 from api.services.web_ai import generate_narrative, get_base_prompt
-from .utils import get_ai_credits, deduct_ai_credit, save_ai_history, disable_prepare
+from .utils import check_pro_tier,  get_ai_credits, deduct_ai_credit, save_ai_history, disable_prepare
 
 router = APIRouter()
 
 @router.get("/war-report")
 def get_war_report(server = Depends(get_active_server), db: Session = Depends(get_db)):
+    check_pro_tier(server)
     disable_prepare(db)
     # 1. Cari war terakhir yang udah selesai
     war = db.execute(text("SELECT id, opponent_name, clan_stars, opp_stars, clan_destruction, opp_destruction, result FROM wars WHERE clan_tag = :ctag AND state = 'warEnded' ORDER BY id DESC LIMIT 1"), {"ctag": server.clan_tag}).fetchone()

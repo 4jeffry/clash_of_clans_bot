@@ -6,7 +6,7 @@ from sqlalchemy import text
 from api.deps import get_active_server, get_db
 from api.services.web_ai import generate_narrative, get_base_prompt
 from api.routers.clan import fetch_coc
-from .utils import get_ai_credits, deduct_ai_credit, save_ai_history, disable_prepare
+from .utils import check_pro_tier,  get_ai_credits, deduct_ai_credit, save_ai_history, disable_prepare
 
 router = APIRouter()
 
@@ -50,6 +50,7 @@ async def sync_opponents_if_needed(db: Session, clan_tag: str, war_id: int):
 
 @router.get("/war-room")
 async def get_war_room(server = Depends(get_active_server), db: Session = Depends(get_db), filter_th: int = Query(None)):
+    check_pro_tier(server)
     disable_prepare(db)
     
     war = db.execute(text("SELECT id, state FROM wars WHERE clan_tag = :ctag ORDER BY id DESC LIMIT 1"), {"ctag": server.clan_tag}).fetchone()

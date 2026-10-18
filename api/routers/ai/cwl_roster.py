@@ -4,12 +4,13 @@ from sqlalchemy import text
 from api.deps import get_active_server, get_db
 from models import ClanMember, War
 from sqlalchemy import desc
-from .utils import disable_prepare
+from .utils import check_pro_tier,  disable_prepare
 
 router = APIRouter()
 
 @router.get("/cwl-roster")
 def get_cwl_roster(server = Depends(get_active_server), db: Session = Depends(get_db)):
+    check_pro_tier(server)
     disable_prepare(db)
     
     # 1. Ambil semua member
