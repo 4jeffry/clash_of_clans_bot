@@ -114,10 +114,13 @@ async def enhance_audit(server = Depends(get_active_server), db: Session = Depen
     # Simpan ke History (Raw SQL)
     try:
         # Ambil raw data lagi buat disimpen
+        top_donors_dict = [{"name": m.name, "score": m.donations} for m in sorted(members, key=lambda x: x.donations, reverse=True)[:5]]
         raw_data = {
             "total_members": total_members,
+            "active_members": total_members - len(zero_donors),
             "zero_donors_count": len(zero_donors),
-            "avg_donations": avg_donations
+            "avg_donations": avg_donations,
+            "top_donors": top_donors_dict
         }
         save_ai_history(db, server.guild_id, "audit_enhance", raw_data, result_text.replace("<br>", "\n"))
     except Exception as e:
