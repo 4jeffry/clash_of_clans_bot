@@ -29,6 +29,7 @@ def health():
     return {"status": "healthy"}
 
 
-from api.routers import auth, clan
+from api.routers import auth, clan, ai
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(clan.router, prefix="/clan", tags=["clan"])
+app.include_router(ai.router, prefix="/ai", tags=["ai"])
