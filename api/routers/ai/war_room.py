@@ -6,30 +6,52 @@ from sqlalchemy import text
 from api.deps import get_active_server, get_db
 from api.services.web_ai import generate_narrative, get_base_prompt
 from api.routers.clan import fetch_coc
-from .utils import get_ai_credits, deduct_ai_credit, save_ai_history
+from .utils import get_ai_credits, deduct_ai_credit, save_ai_history, disable_prepare
 
 router = APIRouter()
 
 async def sync_opponents_if_needed(db: Session, clan_tag: str, war_id: int):
+    disable_prepare(db)
+    
     last_sync = db.execute(text("SELECT MAX(created_at) FROM war_opponents WHERE war_id = :wid"), {"wid": war_id}).scalar()
     now = datetime.utcnow()
+    
     if not last_sync or (now - last_sync.replace(tzinfo=None)) > timedelta(minutes=15):
         encoded_tag = urllib.parse.quote(clan_tag)
         live_war = await fetch_coc(f"/clans/{encoded_tag}/currentwar")
+        
         if live_war and live_war.get("state") in ["inWar", "preparation"]:
             opp_members = live_war.get("opponent", {}).get("members", [])
-            db.execute(text("DELETE FROM war_opponents WHERE war_id != :wid"), {"wid": war_id})
-            for m in opp_members:
-                best_stars = m.get("bestOpponentAttack", {}).get("stars", 0) if m.get("bestOpponentAttack") else 0
-                exists = db.execute(text("SELECT id FROM war_opponents WHERE war_id = :wid AND player_tag = :tag"), {"wid": war_id, "tag": m.get("tag")}).scalar()
-                if exists:
-                    db.execute(text("UPDATE war_opponents SET best_stars = :stars WHERE id = :id"), {"stars": best_stars, "id": exists})
-                else:
-                    db.execute(text("INSERT INTO war_opponents (war_id, player_tag, player_name, townhall_level, map_position, best_stars) VALUES (:wid, :tag, :name, :th, :pos, :stars)"), {"wid": war_id, "tag": m.get("tag"), "name": m.get("name"), "th": m.get("townhallLevel"), "pos": m.get("mapPosition"), "stars": best_stars})
+            
+            # 1. Bersihin data war lama
+            db.execute(text("DELETE FROM war_opponents WHERE war_id NOT IN (SELECT id FROM wars)"))
+            # 2. Bersihin data war ini
+            db.execute(text("DELETE FROM war_opponents WHERE war_id = :wid"), {"wid": war_id})
+            
+            # 3. Bulk Insert (Sekali tembak)
+            if opp_members:
+                insert_data = []
+                for m in opp_members:
+                    best_stars = m.get("bestOpponentAttack", {}).get("stars", 0) if m.get("bestOpponentAttack") else 0
+                    insert_data.append({
+                        "wid": war_id,
+                        "tag": m.get("tag"),
+                        "name": m.get("name"),
+                        "th": m.get("townhallLevel"),
+                        "pos": m.get("mapPosition"),
+                        "stars": best_stars
+                    })
+                
+                db.execute(
+                    text("INSERT INTO war_opponents (war_id, player_tag, player_name, townhall_level, map_position, best_stars) VALUES (:wid, :tag, :name, :th, :pos, :stars)"),
+                    insert_data
+                )
             db.commit()
 
 @router.get("/war-room")
 async def get_war_room(server = Depends(get_active_server), db: Session = Depends(get_db), filter_th: int = Query(None)):
+    disable_prepare(db)
+    
     war = db.execute(text("SELECT id, state FROM wars WHERE clan_tag = :ctag ORDER BY id DESC LIMIT 1"), {"ctag": server.clan_tag}).fetchone()
     
     if not war:
@@ -48,7 +70,6 @@ async def get_war_room(server = Depends(get_active_server), db: Session = Depend
     our_attackers = [{"name": p.player_name, "th": p.townhall_level, "attacks_left": p.attacks_allowed - p.attacks_used} for p in our_participants]
     our_attackers = sorted(our_attackers, key=lambda x: x['th'], reverse=True)
 
-    # Filter TH (Opsional)
     query = "SELECT player_name, townhall_level, map_position, best_stars FROM war_opponents WHERE war_id = :wid AND best_stars < 3"
     params = {"wid": war_id}
     if filter_th:
@@ -73,6 +94,7 @@ async def get_war_room(server = Depends(get_active_server), db: Session = Depend
 
 @router.post("/war-room/enhance")
 async def enhance_war_room(server = Depends(get_active_server), db: Session = Depends(get_db)):
+    disable_prepare(db)
     credits = get_ai_credits(db, server.guild_id)
     if credits <= 0: raise HTTPException(status_code=402, detail="Kredit AI Anda habis.")
     war_data = await get_war_room(server, db)
